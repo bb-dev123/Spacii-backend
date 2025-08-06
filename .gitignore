@@ -1,2 +1,4 @@
 node_modules
 src/constants/fcm-cred.json
+.env.development
+.env.production

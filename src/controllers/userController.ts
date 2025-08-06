@@ -6,7 +6,7 @@ import { Op, WhereOptions } from "sequelize";
 import { generateOTP, sendEmail } from "../helpers/emailHelpers";
 import cron from "node-cron";
 import { Request, Response, NextFunction } from "express";
-import { AuthenticatedRequest, Notification, User } from "../constants";
+import { AuthenticatedRequest, User } from "../constants";
 import crypto from "crypto";
 import { deleteImageFromS3, uploadUserProfileToS3 } from "../helpers/s3Helper";
 import jwt from "jsonwebtoken";
@@ -18,24 +18,6 @@ const envFile =
     ? ".env.production"
     : ".env.development";
 dotenv.config({ path: envFile });
-
-// runs every 24 hours
-export const cleanupOldRecords = () => {
-  cron.schedule("0 0 * * *", async () => {
-    await User.destroy({
-      where: {
-        isVerified: false,
-        createdAt: { [Op.lt]: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-    });
-    await Notification.destroy({
-      where: {
-        isRead: true,
-        readDate: { [Op.lt]: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-      },
-    });
-  });
-};
 
 const handleEmailError = (res: Response, email: string) => {
   console.error(`Failed to send email to ${email}`);
@@ -515,7 +497,6 @@ const logout = async (
   }
 };
 
-// Forgot Password
 const forgotPassword = async (
   req: Request,
   res: Response,
@@ -570,7 +551,6 @@ const forgotPassword = async (
   }
 };
 
-// Verify Reset OTP
 const verifyResetOTP = async (
   req: Request,
   res: Response,
@@ -610,7 +590,6 @@ const verifyResetOTP = async (
   }
 };
 
-// Reset Password
 const resetPassword = async (
   req: Request,
   res: Response,
@@ -655,7 +634,6 @@ const resetPassword = async (
   }
 };
 
-// Resend Verification OTP
 const resendVerificationOTP = async (
   req: Request,
   res: Response,
@@ -706,7 +684,6 @@ const resendVerificationOTP = async (
   }
 };
 
-// Get User
 const getUser = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -727,7 +704,6 @@ const getUser = async (
   }
 };
 
-// Update Profile
 const updateProfile = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -776,107 +752,6 @@ interface NotificationQuery {
   page?: number;
   limit?: number;
 }
-
-const queryNotifications = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  const { isRead, page = 1, limit = 5 } = req.query as NotificationQuery;
-
-  const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
-  const limitNum = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 5)); // Cap at 100
-  const offset = (pageNum - 1) * limitNum;
-
-  try {
-    let whereClause: WhereOptions<Notification> = { userId: req.user.id };
-
-    if (isRead !== undefined) {
-      whereClause.isRead = isRead;
-    }
-
-    const count = await db.Notification.count({
-      where: whereClause,
-    });
-
-    const notifications = await db.Notification.findAll({
-      where: whereClause,
-      include: [
-        {
-          model: db.User,
-          as: "user",
-          attributes: ["id", "name", "email", "image", "phone"],
-        },
-        {
-          model: db.Booking,
-          as: "booking",
-          attributes: ["id", "status", "startDate", "startTime", "price"],
-        },
-        {
-          model: db.Spot,
-          as: "spot",
-          attributes: ["id", "name", "location", "images", "address"],
-        },
-        {
-          model: db.Vehicle,
-          as: "vehicle",
-          attributes: ["id", "name", "type", "licensePlate", "color"],
-        },
-      ],
-      limit: limitNum,
-      offset: offset,
-      order: [["createdAt", "DESC"]], // Add ordering for consistent pagination
-    });
-
-    const totalPages = Math.ceil(count / limitNum);
-    const nextPage = pageNum < totalPages ? pageNum + 1 : null;
-
-    res.send({
-      type: "success",
-      data: notifications,
-      pagination: {
-        totalItems: count,
-        itemsPerPage: limitNum,
-        currentPage: pageNum,
-        totalPages,
-        nextPage,
-      },
-    });
-  } catch (err) {
-    console.error("Error in queryNotifications:", err); // Fixed console message
-    next(err);
-  }
-};
-
-const readNotification = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  const { id } = req.body;
-  const transaction = await db.sequelize.transaction();
-  try {
-    if (!id) {
-      throw new CustomError(400, "id is missing");
-    }
-    const notification = await db.Notification.findOne({
-      where: { id: id },
-      transaction,
-    });
-    if (!notification) throw new CustomError(404, "notification not found!");
-
-    await notification.update(
-      { isRead: true, readDate: new Date() },
-      { transaction }
-    );
-    await transaction.commit();
-
-    res.send({ type: "success", message: "notification marked as read" });
-  } catch (err) {
-    await transaction.rollback();
-    next(err);
-  }
-};
 
 const blockUnblock = async (
   req: AuthenticatedRequest,
@@ -1017,8 +892,6 @@ export default {
   getUser,
   signup,
   updateProfile,
-  queryNotifications,
-  readNotification,
   blockUnblock,
   queryUsers,
 };

@@ -48,21 +48,6 @@ router.post(
   upload.single("image"),
   controller.updateProfile
 );
-
-router.get(
-  "/notifications",
-  queryNotificationsValidations,
-  validateRequest,
-  verifyUser,
-  controller.queryNotifications
-);
-router.post(
-  "/read-notification",
-  idValidation,
-  validateRequest,
-  verifyUser,
-  controller.readNotification
-);
 router.post("/block-unblock", verifyAdmin, idValidation, validateRequest, controller.blockUnblock);
 router.get("/query", verifyAdmin, usersQueryValidations, validateRequest, controller.queryUsers);
 

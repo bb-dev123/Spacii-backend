@@ -149,7 +149,7 @@ export class Venue extends Model<
   declare id: CreationOptional<string>;
   declare userId: string;
   declare name: string;
-  declare spaces: number;
+  declare totalSpaces: number;
   declare status: "draft" | "published";
   declare type: string;
   declare address: string;
@@ -199,7 +199,7 @@ export class SpaceType extends Model<
   declare readonly updatedAt: Date;
 }
 
-export class SpaceFeatures extends Model<
+export class SpaceFeature extends Model<
   InferAttributes<PreferenceType>,
   InferCreationAttributes<
     PreferenceType,

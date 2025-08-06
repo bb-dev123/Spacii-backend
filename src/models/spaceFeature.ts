@@ -1,11 +1,11 @@
 import { DataTypes, Sequelize } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
-import { SpaceFeatures } from "../constants";
+import { SpaceFeature } from "../constants";
 
-export const initSpaceFeaturesModel = (
+export const initSpaceFeatureModel = (
   sequelize: Sequelize
-): typeof SpaceFeatures => {
-  SpaceFeatures.init(
+): typeof SpaceFeature => {
+  SpaceFeature.init(
     {
       id: {
         type: DataTypes.UUID,
@@ -38,16 +38,16 @@ export const initSpaceFeaturesModel = (
     },
     {
       sequelize,
-      modelName: "SpaceFeatures",
-      tableName: "SpaceFeaturess",
+      modelName: "SpaceFeature",
+      tableName: "SpaceFeatures",
     }
   );
 
-  SpaceFeatures.beforeValidate((SpaceFeatures: SpaceFeatures) => {
-    if (!SpaceFeatures.id) {
-      SpaceFeatures.id = uuidv4();
+  SpaceFeature.beforeValidate((spaceFeature: SpaceFeature) => {
+    if (!spaceFeature.id) {
+      spaceFeature.id = uuidv4();
     }
   });
 
-  return SpaceFeatures;
+  return SpaceFeature;
 };

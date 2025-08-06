@@ -1,32 +1,38 @@
 import { Sequelize } from "sequelize";
-import { initUserModel } from "./user";
 import {
   Availability,
   Booking,
   OTP,
-  Spot,
+  Preference,
+  PreferenceType,
+  PreferenceFeature,
+  Venue,
+  Space,
+  SpaceFeature,
+  SpaceType,
   User,
-  Vehicle,
   TimeChange,
   Payment,
-  Log,
   BookingLog,
   StripeAccount,
   Payout,
-  Notification
 } from "../constants";
+import { initUserModel } from "./user";
 import { initOTPModel } from "./otp";
-import { initVehicleModel } from "./vehicle";
-import { initSpotModel } from "./space";
+import { initVenueModel } from "./venue";
+import { initPreferenceModel } from "./preference";
+import { initPreferenceTypeModel } from "./preferenceType";
+import { initPreferenceFeatureModel } from "./preferenceFeature";
+import { initSpaceModel } from "./space";
+import { initSpaceTypeModel } from "./spaceType";
+import { initSpaceFeatureModel } from "./spaceFeature";
 import { initAvailabilityModel } from "./availability";
 import { initBookingModel } from "./booking";
 import { initTimeChangeModel } from "./timechange";
 import { initPaymentModel } from "./payment";
-import { initLogModel } from "./log";
 import { initBookingLogModel } from "./bookingLog";
 import { initStripeAccountModel } from "./stripeAccount";
 import { initPayoutModel } from "./payout";
-import { initNotificationModel } from "./notification";
 
 import dotenv from "dotenv";
 const envFile =
@@ -41,17 +47,20 @@ interface DB {
   Sequelize: typeof Sequelize;
   User: typeof User;
   OTP: typeof OTP;
-  Vehicle: typeof Vehicle;
-  Spot: typeof Spot;
+  Venue: typeof Venue;
+  Space: typeof Space;
+  SpaceType: typeof SpaceType;
+  SpaceFeature: typeof SpaceFeature;
+  Preference: typeof Preference;
+  PreferenceType: typeof PreferenceType;
+  PreferenceFeature: typeof PreferenceFeature;
   Availability: typeof Availability;
   Booking: typeof Booking;
   TimeChange: typeof TimeChange;
   Payment: typeof Payment;
-  Log: typeof Log;
   BookingLog: typeof BookingLog;
   StripeAccount: typeof StripeAccount;
   Payout: typeof Payout;
-  Notification: typeof Notification;
 }
 
 const db: DB = {} as DB;
@@ -69,17 +78,20 @@ const sequelize = new Sequelize(
 // Initialize models
 db.User = initUserModel(sequelize);
 db.OTP = initOTPModel(sequelize);
-db.Vehicle = initVehicleModel(sequelize);
-db.Spot = initSpotModel(sequelize);
+db.Venue = initVenueModel(sequelize);
+db.Preference = initPreferenceModel(sequelize);
+db.PreferenceType = initPreferenceTypeModel(sequelize);
+db.PreferenceFeature = initPreferenceFeatureModel(sequelize);
+db.Space = initSpaceModel(sequelize);
+db.SpaceType = initSpaceTypeModel(sequelize);
+db.SpaceFeature = initSpaceFeatureModel(sequelize);
 db.Availability = initAvailabilityModel(sequelize);
 db.Booking = initBookingModel(sequelize);
 db.TimeChange = initTimeChangeModel(sequelize);
 db.Payment = initPaymentModel(sequelize);
-db.Log = initLogModel(sequelize);
 db.BookingLog = initBookingLogModel(sequelize);
 db.StripeAccount = initStripeAccountModel(sequelize);
 db.Payout = initPayoutModel(sequelize);
-db.Notification = initNotificationModel(sequelize);
 
 // Initialize model associations if they exist
 Object.keys(db).forEach((modelName) => {
@@ -101,94 +113,98 @@ sequelize
 db.sequelize = sequelize;
 db.Sequelize = Sequelize;
 
-db.User.hasMany(db.Log, {
+db.User.hasMany(db.Venue, {
   foreignKey: "userId",
-  as: "logs",
+  as: "venues",
   onDelete: "CASCADE",
 });
 
-db.Log.belongsTo(db.User, {
-  foreignKey: "userId",
-  as: "user",
-});
-
-db.User.hasMany(db.Notification, {
-  foreignKey: "userId",
-  as: "notifications",
-  onDelete: "CASCADE",
-});
-
-db.Notification.belongsTo(db.User, {
+db.Venue.belongsTo(db.User, {
   foreignKey: "userId",
   as: "user",
 });
 
-db.Spot.hasMany(db.Notification, {
-  foreignKey: "spotId",
-  as: "notifications",
-  onDelete: "CASCADE",
-});
-
-db.Notification.belongsTo(db.Spot, {
-  foreignKey: "spotId",
-  as: "spot",
-});
-
-db.Booking.hasMany(db.Notification, {
-  foreignKey: "bookingId",
-  as: "notifications",
-  onDelete: "CASCADE",
-});
-
-db.Notification.belongsTo(db.Booking, {
-  foreignKey: "bookingId",
-  as: "booking",
-});
-
-db.Vehicle.hasMany(db.Notification, {
-  foreignKey: "vehicleId",
-  as: "notifications",
-  onDelete: "CASCADE",
-});
-
-db.Notification.belongsTo(db.Vehicle, {
-  foreignKey: "vehicleId",
-  as: "vehicle",
-});
-
-db.User.hasMany(db.Spot, {
+db.User.hasMany(db.Space, {
   foreignKey: "userId",
-  as: "spots",
+  as: "spaces",
   onDelete: "CASCADE",
 });
 
-db.Spot.belongsTo(db.User, {
+db.Space.belongsTo(db.User, {
   foreignKey: "userId",
   as: "user",
 });
 
-/* one spot has many availability and availability belongs to one spot */
-db.Spot.hasMany(db.Availability, {
-  foreignKey: "spotId",
+db.Venue.hasMany(db.Space, {
+  foreignKey: "venueId",
+  as: "spaces",
+  onDelete: "CASCADE",
+});
+db.Space.belongsTo(db.Venue, {
+  foreignKey: "venueId",
+  as: "venue",
+});
+
+User.hasOne(db.Preference, {
+  foreignKey: "userId",
+  as: "preference",
+  onDelete: "CASCADE",
+});
+db.Preference.belongsTo(db.User, {
+  foreignKey: "userId",
+  as: "user",
+});
+
+db.Preference.hasMany(db.PreferenceFeature, {
+  foreignKey: "preferenceId",
+  as: "features",
+  onDelete: "CASCADE",
+});
+db.PreferenceFeature.belongsTo(db.Preference, {
+  foreignKey: "preferenceId",
+  as: "preference",
+});
+
+db.Preference.hasMany(db.PreferenceType, {
+  foreignKey: "preferenceId",
+  as: "types",
+  onDelete: "CASCADE",
+});
+db.PreferenceType.belongsTo(db.Preference, {
+  foreignKey: "preferenceId",
+  as: "preference",
+});
+
+db.Space.hasMany(db.SpaceFeature, {
+  foreignKey: "spaceId",
+  as: "features",
+  onDelete: "CASCADE",
+});
+db.SpaceFeature.belongsTo(db.Space, {
+  foreignKey: "spaceId",
+  as: "space",
+});
+
+Space.hasMany(SpaceType, {
+  foreignKey: "spaceId",
+  as: "types",
+  onDelete: "CASCADE",
+});
+SpaceType.belongsTo(Space, {
+  foreignKey: "spaceId",
+  as: "space",
+});
+
+/* one space has many availability and availability belongs to one space */
+db.Space.hasMany(db.Availability, {
+  foreignKey: "spaceId",
   as: "availabilities",
   onDelete: "CASCADE",
 });
 
-db.Availability.belongsTo(db.Spot, {
-  foreignKey: "spotId",
-  as: "spot",
-});
-
-/* one user has many vehicles and vehicle belongs to one user */
-db.User.hasMany(db.Vehicle, {
-  foreignKey: "userId",
-  as: "vehicles",
-  onDelete: "CASCADE",
-});
-
-db.Vehicle.belongsTo(db.User, {
-  foreignKey: "userId",
-  as: "user",
+db.Availability.belongsTo(db.Space, {
+  foreignKey: "spaceId",
+  as: "space",
 });
 
 //bookings
@@ -214,26 +230,26 @@ db.Booking.belongsTo(db.User, {
   as: "host",
 });
 
-/* one spot has many bookings and booking belongs to one spot */
-db.Spot.hasMany(db.Booking, {
-  foreignKey: "spotId",
+/* one space has many bookings and booking belongs to one space */
+db.Space.hasMany(db.Booking, {
+  foreignKey: "spaceId",
   as: "bookings",
 });
 
-db.Booking.belongsTo(db.Spot, {
-  foreignKey: "spotId",
-  as: "spot",
+db.Booking.belongsTo(db.Space, {
+  foreignKey: "spaceId",
+  as: "space",
 });
 
-/* one vehicle has many bookings and booking belongs to one vehicle */
-db.Vehicle.hasMany(db.Booking, {
-  foreignKey: "vehicleId",
+/* one venue has many bookings and booking belongs to one venue */
+db.Venue.hasMany(db.Booking, {
+  foreignKey: "venueId",
   as: "bookings",
 });
 
-db.Booking.belongsTo(db.Vehicle, {
-  foreignKey: "vehicleId",
-  as: "vehicle",
+db.Booking.belongsTo(db.Venue, {
+  foreignKey: "venueId",
+  as: "venue",
 });
 
 db.Booking.hasOne(db.BookingLog, {
@@ -254,20 +270,20 @@ db.TimeChange.belongsTo(db.Booking, {
   as: "booking",
 });
 
-db.Spot.hasMany(db.TimeChange, {
-  foreignKey: "spotId",
-  as: "spotTimeChanges",
+db.Space.hasMany(db.TimeChange, {
+  foreignKey: "spaceId",
+  as: "spaceTimeChanges",
   onDelete: "CASCADE",
 });
 
-db.TimeChange.belongsTo(db.Spot, {
-  foreignKey: "spotId",
-  as: "spot",
+db.TimeChange.belongsTo(db.Space, {
+  foreignKey: "spaceId",
+  as: "space",
 });
 
 db.User.hasMany(db.TimeChange, {
   foreignKey: "clientId",
-  as: "clientTimeChnages",
+  as: "clientTimeChanges",
 });
 
 db.TimeChange.belongsTo(db.User, {
@@ -314,15 +330,14 @@ db.Payment.belongsTo(db.Booking, {
   as: "booking",
 });
 
-db.Spot.hasMany(db.Payment, {
-  foreignKey: "spotId",
-  as: "spotPayments",
+db.Space.hasMany(db.Payment, {
+  foreignKey: "spaceId",
+  as: "spacePayments",
 });
-db.Payment.belongsTo(db.Spot, {
-  foreignKey: "spotId",
-  as: "spot",
+db.Payment.belongsTo(db.Space, {
+  foreignKey: "spaceId",
+  as: "space",
 });
-
 
 db.User.hasOne(db.StripeAccount, {
   foreignKey: "userId",

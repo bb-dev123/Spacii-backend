@@ -81,7 +81,6 @@ export const StripeConnectController = {
       });
 
       if (!stripeAccount) {
-
         const account = await stripe.accounts.create({
           type: "express",
           country: "US",
@@ -90,12 +89,12 @@ export const StripeConnectController = {
             card_payments: { requested: true },
             transfers: { requested: true },
           },
-          business_type: 'individual',
+          business_type: "individual",
           individual: {
             first_name: req.user.name || undefined,
             last_name: req.user.name || undefined,
-            email: req.user.email || undefined
-          }
+            email: req.user.email || undefined,
+          },
         });
 
         console.log("Stripe account created:", account);
@@ -982,7 +981,7 @@ async function getDetailedBalanceForUser(
 
     const clientPayments = (await db.Payment.findAll({
       where: {
-        userId: userId,
+        clientId: userId,
         status: "succeeded",
       },
       include: [

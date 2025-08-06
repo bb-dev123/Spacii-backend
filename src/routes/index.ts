@@ -17,15 +17,15 @@ router.get("/", (_req: Request, res: Response) => {
 });
 
 router.use("/user", userRoutes);
-router.use("/vehicle", vehicleRoute);
-router.use("/spot", spotRoute);
-router.use("/availability", availabilityRoute);
-router.use("/booking", bookingRoute);
-router.use("/booking-log", bookingLogRoute);
-router.use("/payment", paymentRoute);
-router.use("/stripe-payout", payoutRoutes);
+// router.use("/vehicle", vehicleRoute);
+// router.use("/spot", spotRoute);
+// router.use("/availability", availabilityRoute);
+// router.use("/booking", bookingRoute);
+// router.use("/booking-log", bookingLogRoute);
+// router.use("/payment", paymentRoute);
+// router.use("/stripe-payout", payoutRoutes);
 // router.use("/plaid", plaidRoutes);
-router.use("/admin-analytics", analyticsRoutes);
+// router.use("/admin-analytics", analyticsRoutes);
 
 // 404 handler
 router.use((_req: Request, res: Response) => {

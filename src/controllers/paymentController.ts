@@ -294,7 +294,7 @@ export const PaymentController = {
     const limitNum = parseInt(limit, 10);
     const offset = (pageNum - 1) * limitNum;
     try {
-      let whereClause: WhereOptions<Payment> = { userId: req.user.id };
+      let whereClause: WhereOptions<Payment> = { clientId: req.user.id };
 
       if (status) {
         if (
@@ -575,10 +575,10 @@ export const PaymentController = {
       let whereClause: WhereOptions<Payment> = {};
 
       if (userId) {
-        whereClause.userId = userId;
+        whereClause.clientId = userId;
       }
       if (spotId) {
-        whereClause.spotId = spotId;
+        whereClause.clientId = spotId;
       }
       if (status) {
         if (
@@ -789,38 +789,6 @@ async function handlePaymentIntentSucceeded(paymentIntent: any) {
     );
 
     await transaction.commit();
-    await db.Notification.bulkCreate(
-      [
-        {
-          userId: booking.clientId,
-          bookingId: booking.id || null,
-          spotId: booking.spotId || null,
-          vehicleId: booking.vehicleId || null,
-          type: "payment_success",
-          title: "Booking Complete",
-          body: `Your payment for booking #${booking.id} was successful.`,
-          data: {
-            bookingId: booking.id,
-          },
-          isRead: false,
-        },
-        {
-          userId: booking.hostId,
-          bookingId: booking.id || null,
-          spotId: booking.spotId || null,
-          vehicleId: booking.vehicleId || null,
-          type: "booking_paid",
-          title: "Payment Recieved",
-          body: `You received a payment for booking #${booking.id}.`,
-          data: {
-            bookingId: booking.id,
-          },
-          isRead: false,
-        },
-      ],
-      { transaction }
-    );
-    console.log(`Payment for booking #${bookingId} processed successfully`);
   } catch (error) {
     await transaction.rollback();
     console.error("Error processing successful payment:", error);

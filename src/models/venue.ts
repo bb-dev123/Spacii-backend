@@ -19,8 +19,8 @@ export const initVenueModel = (sequelize: Sequelize): typeof Venue => {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      spaces: {
-        type: DataTypes.NUMBER,
+      totalSpaces: {
+        type: DataTypes.INTEGER,
         allowNull: false,
       },
       status: {
