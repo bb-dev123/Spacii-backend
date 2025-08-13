@@ -7,7 +7,7 @@ import { errorHandler } from "./middlewares/error";
 import { PaymentController } from "./controllers/paymentController";
 import { cronJobs } from "./helpers/cronJobs";
 import payoutRoutes from "./routes/payoutRoutes";
-//check
+
 const envFile =
   process.env.NODE_ENV === "production"
     ? ".env.production"
@@ -44,7 +44,7 @@ app.use(errorHandler);
 
 cronJobs();
 
-const PORT = process.env.PORT || 4001;
+const PORT = process.env.PORT || 4003;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

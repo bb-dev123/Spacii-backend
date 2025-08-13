@@ -68,53 +68,6 @@ export class OTP extends Model<
   declare readonly updatedAt: Date;
 }
 
-export class Preference extends Model<
-  InferAttributes<Preference>,
-  InferCreationAttributes<
-    Preference,
-    { omit: "id" | "createdAt" | "updatedAt" }
-  >
-> {
-  declare id: CreationOptional<string>;
-  declare userId: string;
-  declare tag: "vibe" | "occassion" | "architect";
-
-  declare readonly createdAt: Date;
-  declare readonly updatedAt: Date;
-}
-
-export class PreferenceType extends Model<
-  InferAttributes<PreferenceType>,
-  InferCreationAttributes<
-    PreferenceType,
-    { omit: "id" | "createdAt" | "updatedAt" }
-  >
-> {
-  declare id: CreationOptional<string>;
-  declare preferenceId: string;
-  declare userId: string;
-  declare text: string;
-
-  declare readonly createdAt: Date;
-  declare readonly updatedAt: Date;
-}
-
-export class PreferenceFeature extends Model<
-  InferAttributes<PreferenceType>,
-  InferCreationAttributes<
-    PreferenceType,
-    { omit: "id" | "createdAt" | "updatedAt" }
-  >
-> {
-  declare id: CreationOptional<string>;
-  declare preferenceId: string;
-  declare userId: string;
-  declare text: string;
-
-  declare readonly createdAt: Date;
-  declare readonly updatedAt: Date;
-}
-
 export class User extends Model<
   InferAttributes<User>,
   InferCreationAttributes<User, { omit: "id" | "createdAt" | "updatedAt" }>
@@ -142,6 +95,36 @@ export class User extends Model<
   declare readonly updatedAt: Date;
 }
 
+export class Tag extends Model<
+  InferAttributes<Tag>,
+  InferCreationAttributes<Tag, { omit: "id" | "createdAt" | "updatedAt" }>
+> {
+  declare id: CreationOptional<string>;
+  declare userId: string | null;
+  declare spaceId: string | null;
+  declare type: "vibe" | "occassion" | "architect" | "features" | "preference";
+  declare text: string;
+
+  declare readonly createdAt: Date;
+  declare readonly updatedAt: Date;
+}
+
+export class Media extends Model<
+  InferAttributes<Media>,
+  InferCreationAttributes<Media, { omit: "id" | "createdAt" | "updatedAt" }>
+> {
+  declare id: CreationOptional<string>;
+  declare userId: string;
+  declare spaceId: string | null;
+  declare url: string;
+  declare number: number | null;
+  declare type: "image" | "video" | null;
+  declare text: string | null;
+
+  declare readonly createdAt: Date;
+  declare readonly updatedAt: Date;
+}
+
 export class Venue extends Model<
   InferAttributes<Venue>,
   InferCreationAttributes<Venue, { omit: "id" | "createdAt" | "updatedAt" }>
@@ -152,9 +135,9 @@ export class Venue extends Model<
   declare totalSpaces: number;
   declare status: "draft" | "published";
   declare type: string;
-  declare address: string;
-  declare location: string;
-  declare timeZone: string;
+  declare address: string | null;
+  declare location: any | null;
+  declare timeZone: string | null;
 
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
@@ -168,48 +151,13 @@ export class Space extends Model<
   declare userId: string;
   declare venueId: string;
   declare name: string;
-  declare images: string[] | null;
-  declare videos: string[] | null;
   declare roomNumber: number | null;
   declare capacity: number | null;
-  declare tag: "vibe" | "occassion" | "architect";
   declare status: "draft" | "published";
   declare description: string | null;
-  declare ratePerHour: number;
+  declare ratePerHour: number | null;
   declare minHours: number | null;
   declare discountHours: number | null;
-
-  declare readonly createdAt: Date;
-  declare readonly updatedAt: Date;
-}
-
-export class SpaceType extends Model<
-  InferAttributes<PreferenceType>,
-  InferCreationAttributes<
-    PreferenceType,
-    { omit: "id" | "createdAt" | "updatedAt" }
-  >
-> {
-  declare id: CreationOptional<string>;
-  declare spaceId: string;
-  declare userId: string;
-  declare text: string;
-
-  declare readonly createdAt: Date;
-  declare readonly updatedAt: Date;
-}
-
-export class SpaceFeature extends Model<
-  InferAttributes<PreferenceType>,
-  InferCreationAttributes<
-    PreferenceType,
-    { omit: "id" | "createdAt" | "updatedAt" }
-  >
-> {
-  declare id: CreationOptional<string>;
-  declare spaceId: string;
-  declare userId: string;
-  declare text: string;
 
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
@@ -386,12 +334,10 @@ export class TimeChange extends Model<
 }
 
 export interface QuerySpace {
-  name?: string;
   userId?: string;
-  address?: string;
+  name?: string;
   minRate?: string;
   maxRate?: string;
-  vehicleType?: string;
   status?: string;
   date?: string;
   duration?: string;
@@ -401,11 +347,12 @@ export interface QuerySpace {
   limit?: string;
 }
 
-export interface QueryVehicles {
+export interface QueryVenues {
   userId?: string;
   name?: string;
-  licensePlate?: string;
   type?: string;
+  address?: string;
+  status?: string;
   page?: string;
   limit?: string;
 }

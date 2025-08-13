@@ -1,11 +1,9 @@
 import { DataTypes, Sequelize } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
-import { PreferenceFeature } from "../constants";
+import { Media } from "../constants";
 
-export const initPreferenceFeatureModel = (
-  sequelize: Sequelize
-): typeof PreferenceFeature => {
-  PreferenceFeature.init(
+export const initMediaModel = (sequelize: Sequelize): typeof Media => {
+  Media.init(
     {
       id: {
         type: DataTypes.UUID,
@@ -17,13 +15,25 @@ export const initPreferenceFeatureModel = (
         type: DataTypes.UUID,
         allowNull: false,
       },
-      preferenceId: {
+      spaceId: {
         type: DataTypes.UUID,
         allowNull: false,
       },
-      text: {
+      url: {
         type: DataTypes.STRING,
         allowNull: false,
+      },
+      type: {
+        type: DataTypes.ENUM("image", "video"),
+        allowNull: false,
+      },
+      number: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      text: {
+        type: DataTypes.STRING,
+        allowNull: true,
       },
       createdAt: {
         type: DataTypes.DATE,
@@ -38,16 +48,16 @@ export const initPreferenceFeatureModel = (
     },
     {
       sequelize,
-      modelName: "PreferenceFeature",
-      tableName: "PreferenceFeatures",
+      modelName: "Media",
+      tableName: "Medias",
     }
   );
 
-  PreferenceFeature.beforeValidate((preferenceFeature: PreferenceFeature) => {
-    if (!preferenceFeature.id) {
-      preferenceFeature.id = uuidv4();
+  Media.beforeValidate((media: Media) => {
+    if (!media.id) {
+      media.id = uuidv4();
     }
   });
 
-  return PreferenceFeature;
+  return Media;
 };

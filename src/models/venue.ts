@@ -33,15 +33,15 @@ export const initVenueModel = (sequelize: Sequelize): typeof Venue => {
       },
       address: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
       },
       location: {
         type: DataTypes.GEOMETRY("POINT"),
-        allowNull: false,
+        allowNull: true,
       },
       timeZone: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
         defaultValue: "UTC",
       },
       createdAt: {
@@ -62,7 +62,6 @@ export const initVenueModel = (sequelize: Sequelize): typeof Venue => {
     }
   );
 
-  // Properly typed beforeValidate hook
   Venue.beforeValidate((Venue: Venue) => {
     if (!Venue.id) {
       Venue.id = uuidv4();

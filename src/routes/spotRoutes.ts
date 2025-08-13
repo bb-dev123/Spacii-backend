@@ -1,5 +1,5 @@
 import { Router } from "express";
-import controller from "../controllers/spotController";
+import controller from "../controllers/spaceController";
 import { verifyUser } from "../middlewares/passport";
 import { handleMulterUpload } from "../middlewares/multer";
 import { validateRequest } from "../middlewares/validation";

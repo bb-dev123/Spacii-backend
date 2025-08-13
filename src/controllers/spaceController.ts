@@ -3,7 +3,6 @@ import db from "../models";
 import { CustomError } from "../middlewares/error";
 import {
   FindAttributeOptions,
-  InferCreationAttributes,
   Op,
   WhereOptions,
 } from "sequelize";
@@ -13,177 +12,51 @@ import {
   Booking,
   PaginationParams,
   AuthenticatedRequest,
-  Spot,
-  QuerySpot,
+  Space,
+  QuerySpace,
+  Venue,
 } from "../constants";
-import {
-  convertTimeToMinutes,
-  normalizeTimeFormat,
-} from "../helpers/timeDateHelpers";
-import { deleteImageFromS3, uploadSpotImageToS3 } from "../helpers/s3Helper";
-import { getTimezoneFromLocation } from "../helpers/timeZone";
+import { deleteMediaFromS3, uploadSpaceMediaToS3 } from "../helpers/s3Helper";
 import { DateTime } from "luxon";
 
-const createSpot = async (
+const createSpace = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   const {
+    venueId,
     name,
-    address,
-    ratePerHour,
-    status,
-    allowedVehicleType,
-    location,
-    availabilities,
+    roomNumber,
+    capacity,
+    status = "draft",
+    description,
   } = req.body;
 
   const transaction = await db.sequelize.transaction();
 
   try {
-    if (!name || !address || !ratePerHour || !status || !location) {
+    if (!name || !capacity) {
       throw new CustomError(400, "missing field");
     }
     if (status !== "draft" && status !== "published") {
       throw new CustomError(400, "invalid status");
     }
 
-    const latitude = parseFloat(location.coordinates[1]);
-    const longitude = parseFloat(location.coordinates[0]);
-
-    if (
-      !location ||
-      !location.coordinates ||
-      location.coordinates.length !== 2
-    ) {
-      throw new CustomError(
-        400,
-        "invalid location format. Expected: { type: 'Point', coordinates: [longitude, latitude] }"
-      );
-    }
-
-    if (
-      typeof longitude !== "number" ||
-      typeof latitude !== "number" ||
-      longitude < -180 ||
-      longitude > 180 ||
-      latitude < -90 ||
-      latitude > 90
-    ) {
-      throw new CustomError(
-        400,
-        "invalid coordinates. Longitude must be between -180 and 180, latitude between -90 and 90"
-      );
-    }
-
-    let timeZone: string;
-    try {
-      timeZone = await getTimezoneFromLocation(latitude, longitude);
-    } catch (error) {
-      console.error("Failed to get timezone:", error);
-      timeZone = "UTC";
-    }
-
-    let images: string[] = [];
-    if (req.files && Array.isArray(req.files)) {
-      if (req.files.length > 3) {
-        throw new CustomError(400, "maximum 3 images allowed");
-      }
-      for (const file of req.files) {
-        const imageUrl = await uploadSpotImageToS3(file);
-        images.push(imageUrl);
-      }
-    }
-
-    let hasOverlaps = false;
-    let processedAvailabilities: any[] = [];
-
-    if (availabilities && availabilities.length > 0) {
-      const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-      for (let i = 0; i < availabilities.length; i++) {
-        const { day, startTime, endTime } = availabilities[i];
-
-        if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
-          throw new CustomError(
-            400,
-            `invalid time format at index ${i}. Times must be in 24-hour format (HH:MM)`
-          );
-        }
-
-        const normalizedStartTime = normalizeTimeFormat(startTime);
-        const normalizedEndTime = normalizeTimeFormat(endTime);
-
-        const startMinutes = convertTimeToMinutes(normalizedStartTime);
-        const endMinutes = convertTimeToMinutes(normalizedEndTime);
-
-        if (endMinutes <= startMinutes) {
-          throw new CustomError(
-            400,
-            `end time must be after start time at index ${i}`
-          );
-        }
-
-        processedAvailabilities.push({
-          day,
-          startTime: normalizedStartTime,
-          endTime: normalizedEndTime,
-          startMinutes,
-          endMinutes,
-        });
-      }
-
-      for (let i = 0; i < processedAvailabilities.length && !hasOverlaps; i++) {
-        for (let j = i + 1; j < processedAvailabilities.length; j++) {
-          const current = processedAvailabilities[i];
-          const other = processedAvailabilities[j];
-
-          if (current.day === other.day) {
-            if (
-              (current.startMinutes >= other.startMinutes &&
-                current.startMinutes < other.endMinutes) ||
-              (current.endMinutes > other.startMinutes &&
-                current.endMinutes <= other.endMinutes) ||
-              (current.startMinutes <= other.startMinutes &&
-                current.endMinutes >= other.endMinutes)
-            ) {
-              hasOverlaps = true;
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    const newSpot = await db.Spot.create(
+    const newSpace = await db.Space.create(
       {
         userId: req.user.id,
+        venueId,
         name,
-        address,
-        ratePerHour,
+        roomNumber: roomNumber || null,
+        capacity,
         status,
-        location,
-        timeZone,
-        allowedVehicleType,
-        images: images.length > 0 ? images : null,
+        description: description || null,
       },
       { transaction }
     );
 
-    if (processedAvailabilities.length > 0 && !hasOverlaps) {
-      await db.Availability.bulkCreate(
-        processedAvailabilities.map((availability) => ({
-          spotId: newSpot.id,
-          day: availability.day,
-          startTime: availability.startTime,
-          endTime: availability.endTime,
-        })),
-        { transaction }
-      );
-    }
-
-    const completeSpot = await db.Spot.findByPk(newSpot.id, {
+    const completeSpace = await db.Space.findByPk(newSpace.id, {
       attributes: {
         exclude: ["createdAt", "updatedAt"],
       },
@@ -196,28 +69,18 @@ const createSpot = async (
     });
 
     await transaction.commit();
-
-    if (hasOverlaps) {
-      res.send({
-        type: "success",
-        message:
-          "spot added successfully, but availability overlaps detected. Availabilities were not saved.",
-        data: completeSpot,
-      });
-    } else {
-      res.send({
-        type: "success",
-        message: "spot added successfully",
-        data: completeSpot,
-      });
-    }
+    res.send({
+      type: "success",
+      message: "space added successfully",
+      data: completeSpace,
+    });
   } catch (err) {
     await transaction.rollback();
     next(err);
   }
 };
 
-export const updateSpot = async (
+export const updateSpace = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
@@ -225,19 +88,20 @@ export const updateSpot = async (
   const {
     id,
     name,
-    address,
+    roomNumber,
+    capacity,
     ratePerHour,
+    minHours,
+    discountHours,
     status,
-    location,
-    allowedVehicleType,
-    imageOperations,
+    mediaOperations,
   } = req.body;
 
   const transaction = await db.sequelize.transaction();
 
   try {
     if (!id) {
-      throw new CustomError(400, "Spot ID is missing");
+      throw new CustomError(400, "space Id is missing");
     }
 
     if (status && status !== "draft" && status !== "published") {
@@ -247,51 +111,74 @@ export const updateSpot = async (
       );
     }
 
-    const spot = await db.Spot.findOne({
+    const space = await db.Space.findOne({
       where: { id },
       transaction,
     });
-
-    if (!spot) {
-      throw new CustomError(404, "Spot not found!");
+    if (!space) {
+      throw new CustomError(404, "space not found!");
     }
 
-    if (spot.userId !== req.user.id) {
-      throw new CustomError(403, "User unauthorized!");
+    if (space.userId !== req.user.id) {
+      throw new CustomError(403, "user unauthorized!");
     }
 
     let operations: any = {};
-    if (imageOperations) {
+    if (mediaOperations) {
       try {
         operations =
-          typeof imageOperations === "string"
-            ? JSON.parse(imageOperations)
-            : imageOperations;
+          typeof mediaOperations === "string"
+            ? JSON.parse(mediaOperations)
+            : mediaOperations;
       } catch (error) {
-        console.error("Error parsing imageOperations:", error);
+        console.error("Error parsing mediaOperations:", error);
         operations = {};
       }
     }
 
-    const currentImages = spot.images || [];
-    let finalImages: string[] = [...currentImages];
+    const currentMedia = await db.Media.findAll({
+      where: { spaceId: id },
+      order: [["number", "ASC"]],
+      transaction,
+    });
+
+    let finalMedia: Array<{
+      url: string;
+      number: number | null;
+      type: "image" | "video";
+      id?: string;
+    }> = currentMedia.map((m) => ({
+      url: m.url,
+      number: m.number,
+      type: m.url.match(/\.(mp4|avi|mov|wmv|flv|webm)$/i) ? "video" : "image",
+      id: m.id,
+    }));
 
     if (operations.delete && Array.isArray(operations.delete)) {
-      const imagesToDelete = operations.delete;
+      const urlsToDelete = operations.delete;
 
-      for (const imageToDelete of imagesToDelete) {
-        const imageIndex = finalImages.indexOf(imageToDelete);
-        if (imageIndex > -1) {
-          finalImages.splice(imageIndex, 1);
+      for (const urlToDelete of urlsToDelete) {
+        const mediaIndex = finalMedia.findIndex((m) => m.url === urlToDelete);
+        if (mediaIndex > -1) {
+          const mediaToDelete = finalMedia[mediaIndex];
+          finalMedia.splice(mediaIndex, 1);
 
-          const isS3Image = imageToDelete.includes(
+          if (mediaToDelete.id) {
+            await db.Media.destroy({
+              where: { id: mediaToDelete.id },
+              transaction,
+            });
+          }
+
+          // Delete from S3 if it's an S3 image/video
+          const isS3Media = urlToDelete.includes(
             `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/`
           );
-          if (isS3Image) {
+          if (isS3Media) {
             try {
-              await deleteImageFromS3(imageToDelete);
+              await deleteMediaFromS3(urlToDelete);
             } catch (error) {
-              console.error(`Failed to delete image ${imageToDelete}:`, error);
+              console.error(`Failed to delete media ${urlToDelete}:`, error);
             }
           }
         }
@@ -299,66 +186,128 @@ export const updateSpot = async (
     }
 
     if (req.files && Array.isArray(req.files)) {
-      const totalImages = finalImages.length + req.files.length;
-      if (totalImages > 3) {
-        throw new CustomError(400, "Maximum 3 images allowed in total");
+      const newImages = req.files.filter((file) =>
+        file.mimetype.startsWith("image/")
+      );
+      const newVideos = req.files.filter((file) =>
+        file.mimetype.startsWith("video/")
+      );
+
+      const currentImages = finalMedia.filter((m) => m.type === "image");
+      const currentVideos = finalMedia.filter((m) => m.type === "video");
+
+      if (currentImages.length + newImages.length > 10) {
+        throw new CustomError(400, "Maximum 10 images allowed");
+      }
+
+      if (currentVideos.length + newVideos.length > 3) {
+        throw new CustomError(400, "Maximum 3 videos allowed");
       }
 
       for (const file of req.files) {
-        const imageUrl = await uploadSpotImageToS3(file);
-        finalImages.push(imageUrl);
+        if (
+          !file.mimetype.startsWith("image/") &&
+          !file.mimetype.startsWith("video/")
+        ) {
+          throw new CustomError(400, "Only image and video files are allowed");
+        }
+
+        const mediaUrl = await uploadSpaceMediaToS3(file);
+        const mediaType = file.mimetype.startsWith("video/")
+          ? "video"
+          : "image";
+
+        finalMedia.push({
+          url: mediaUrl,
+          number: finalMedia.length + 1, // Temporary number, will be reordered
+          type: mediaType,
+        });
       }
     }
 
+    // Handle reordering
     if (operations.reorder && Array.isArray(operations.reorder)) {
-      const reorderedImages = operations.reorder.filter((url: string) =>
-        finalImages.includes(url)
+      const reorderedUrls = operations.reorder;
+      const reorderedMedia: typeof finalMedia = [];
+
+      for (let i = 0; i < reorderedUrls.length; i++) {
+        const url = reorderedUrls[i];
+        const mediaItem = finalMedia.find((m) => m.url === url);
+        if (mediaItem) {
+          reorderedMedia.push({
+            ...mediaItem,
+            number: i + 1,
+          });
+        }
+      }
+
+      // Add any remaining media that wasn't in the reorder list
+      const remainingMedia = finalMedia.filter(
+        (m) => !reorderedUrls.includes(m.url)
       );
-
-      if (reorderedImages.length === finalImages.length) {
-        finalImages = reorderedImages;
+      for (const media of remainingMedia) {
+        reorderedMedia.push({
+          ...media,
+          number: reorderedMedia.length + 1,
+        });
       }
+
+      finalMedia = reorderedMedia;
+    } else {
+      // If no reordering specified, just update numbers sequentially
+      finalMedia = finalMedia.map((media, index) => ({
+        ...media,
+        number: index + 1,
+      }));
     }
 
-    let timeZone: string = spot.timeZone || "UTC";
-    if (
-      location &&
-      JSON.stringify(location) !== JSON.stringify(spot.location)
-    ) {
-      try {
-        timeZone = await getTimezoneFromLocation(
-          location.coordinates[1],
-          location.coordinates[0]
-        );
-      } catch (error) {
-        console.error("Failed to get timezone:", error);
-        timeZone = spot.timeZone || "UTC";
-      }
+    await db.Media.destroy({
+      where: { spaceId: id },
+      transaction,
+    });
+
+    for (const media of finalMedia) {
+      await db.Media.create(
+        {
+          userId: req.user.id,
+          spaceId: id,
+          url: media.url,
+          number: media.number,
+        },
+        { transaction }
+      );
     }
 
-    await spot.update(
+    await space.update(
       {
         ...(name !== undefined && { name }),
-        ...(address !== undefined && { address }),
+        ...(roomNumber !== undefined && { roomNumber }),
+        ...(capacity !== undefined && { capacity }),
         ...(ratePerHour !== undefined && { ratePerHour }),
+        ...(minHours !== undefined && { minHours }),
+        ...(discountHours !== undefined && { discountHours }),
         ...(status !== undefined && { status }),
-        ...(location !== undefined && { location }),
-        timeZone: timeZone,
-        ...(allowedVehicleType !== undefined && { allowedVehicleType }),
-        images: finalImages.length > 0 ? finalImages : null,
       },
       { transaction }
     );
 
-    const completeSpot = await db.Spot.findByPk(spot.id, {
+    const completeSpace = await db.Space.findByPk(space.id, {
       attributes: {
         exclude: ["createdAt", "updatedAt"],
       },
-      include: {
-        model: db.Availability,
-        as: "availabilities",
-        attributes: { exclude: ["createdAt", "updatedAt"] },
-      },
+      include: [
+        {
+          model: db.Availability,
+          as: "availabilities",
+          attributes: { exclude: ["createdAt", "updatedAt"] },
+        },
+        {
+          model: db.Media,
+          as: "media",
+          attributes: { exclude: ["createdAt", "updatedAt"] },
+          order: [["number", "ASC"]],
+        },
+      ],
       transaction,
     });
 
@@ -366,8 +315,8 @@ export const updateSpot = async (
 
     res.send({
       type: "success",
-      message: "Spot updated successfully",
-      data: completeSpot,
+      message: "Space updated successfully",
+      data: completeSpace,
     });
   } catch (err) {
     await transaction.rollback();
@@ -375,20 +324,20 @@ export const updateSpot = async (
   }
 };
 
-const getSpot = async (req: Request, res: Response, next: NextFunction) => {
-  const { spotId } = req.params;
+const getSpace = async (req: Request, res: Response, next: NextFunction) => {
+  const { spaceId } = req.params;
 
   try {
-    if (!spotId) {
-      throw new CustomError(400, "spot id is missing");
+    if (!spaceId) {
+      throw new CustomError(400, "space id is missing");
     }
 
     let attributes: FindAttributeOptions | undefined = undefined;
-    let whereClause: WhereOptions<Spot> = { id: spotId };
+    let whereClause: WhereOptions<Space> = { id: spaceId };
 
     attributes = { exclude: ["createdAt", "updatedAt"] };
 
-    const spot = (await db.Spot.findOne({
+    const space = (await db.Space.findOne({
       where: whereClause,
       attributes,
       include: [
@@ -412,23 +361,23 @@ const getSpot = async (req: Request, res: Response, next: NextFunction) => {
           },
         },
       ],
-    })) as unknown as SpotWithDistance;
+    }));
 
-    if (!spot) {
-      throw new CustomError(404, "spot not found!");
+    if (!space) {
+      throw new CustomError(404, "space not found!");
     }
 
-    const spotObj = spot.toJSON() as SpotWithDistance;
+    const spaceObj = space.toJSON() as SpaceWithDistance;
 
-    if (spotObj.availabilities && Array.isArray(spotObj.availabilities)) {
+    if (spaceObj.availabilities && Array.isArray(spaceObj.availabilities)) {
       const uniqueDaysSet = new Set<string>();
 
-      for (const avail of spotObj.availabilities) {
+      for (const avail of spaceObj.availabilities) {
         uniqueDaysSet.add(avail.day);
       }
 
       const weekOrder = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      spotObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
+      spaceObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
 
       const dayOrder = {
         Sat: 1,
@@ -440,7 +389,7 @@ const getSpot = async (req: Request, res: Response, next: NextFunction) => {
         Fri: 7,
       };
 
-      spotObj.availabilities.sort((a, b) => {
+      spaceObj.availabilities.sort((a, b) => {
         const dayComparison = dayOrder[a.day] - dayOrder[b.day];
         if (dayComparison === 0) {
           return a.startTime.localeCompare(b.startTime);
@@ -451,34 +400,32 @@ const getSpot = async (req: Request, res: Response, next: NextFunction) => {
 
     res.send({
       type: "success",
-      data: spotObj,
+      data: spaceObj,
     });
   } catch (err) {
-    console.error("Error in getSpot:", err);
+    console.error("Error in getSpace:", err);
     next(err);
   }
 };
 
-const getUserSpots = async (
+const getUserSpaces = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
   const {
     name,
-    address,
-    vehicleType,
     status,
     page = "1",
     limit = "5",
-  } = req.query as QuerySpot;
+  } = req.query as QuerySpace;
 
   const pageNum = parseInt(page, 10);
   const limitNum = parseInt(limit, 10);
   const offset = (pageNum - 1) * limitNum;
 
   try {
-    let whereClause: WhereOptions<Spot> = { userId: req.user.id };
+    let whereClause: WhereOptions<Space> = { userId: req.user.id };
 
     if (name) {
       const nameKeywords = name.replace(/\s+/g, "").toLowerCase();
@@ -491,21 +438,6 @@ const getUserSpots = async (
       };
     }
 
-    if (address) {
-      const addressKeywords = address.replace(/\s+/g, "").toLowerCase();
-      const addressWords = address.split(/\s+/).map((word) => `%${word}%`);
-      whereClause.address = {
-        [Op.or]: [
-          { [Op.iLike]: `%${addressKeywords}%` },
-          ...addressWords.map((word) => ({ [Op.iLike]: word })),
-        ],
-      };
-    }
-
-    if (vehicleType) {
-      whereClause[`allowedVehicleType.${vehicleType}`] = true;
-    }
-
     if (status) {
       if (status !== "draft" && status !== "published") {
         throw new CustomError(400, "invalid status");
@@ -514,11 +446,11 @@ const getUserSpots = async (
     }
     let order: any[] = [["id", "ASC"]];
 
-    const count = await db.Spot.count({
+    const count = await db.Space.count({
       where: whereClause,
     });
 
-    const spots = await db.Spot.findAll({
+    const spaces = await db.Space.findAll({
       attributes: { exclude: ["createdAt", "updatedAt"] },
       where: whereClause,
       include: {
@@ -531,8 +463,8 @@ const getUserSpots = async (
       order,
     });
 
-    if (!spots) {
-      throw new CustomError(404, "no spot found!");
+    if (!spaces) {
+      throw new CustomError(404, "no space found!");
     }
 
     const totalPages = Math.ceil(count / limitNum);
@@ -540,7 +472,7 @@ const getUserSpots = async (
 
     res.send({
       type: "success",
-      data: spots,
+      data: spaces,
       pagination: {
         totalItems: count,
         itemsPerPage: limitNum,
@@ -554,14 +486,14 @@ const getUserSpots = async (
   }
 };
 
-interface HomePageSpotQuery {
+interface HomePageSpaceQuery {
   active?: string;
   recent?: string;
   upcoming?: string;
   hosted?: string;
 }
 
-const getHomePageSpots = async (
+const getHomePageSpaces = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
@@ -571,7 +503,7 @@ const getHomePageSpots = async (
     recent = "5",
     upcoming = "3",
     hosted = "3",
-  } = req.query as HomePageSpotQuery;
+  } = req.query as HomePageSpaceQuery;
   const userId = req.user.id;
 
   try {
@@ -682,7 +614,7 @@ const getHomePageSpots = async (
     const activeSpots = await db.Spot.findAll({
       where: {
         id: {
-          [Op.in]: activeBookings.map((booking: Booking) => booking.spotId),
+          [Op.in]: activeBookings.map((booking: Booking) => booking.spaceId),
         },
       },
       attributes: { exclude: ["createdAt", "updatedAt"] },
@@ -699,7 +631,7 @@ const getHomePageSpots = async (
     const recentSpots = await db.Spot.findAll({
       where: {
         id: {
-          [Op.in]: recentBookings.map((booking: Booking) => booking.spotId),
+          [Op.in]: recentBookings.map((booking: Booking) => booking.spaceId),
         },
         status: "published",
       },
@@ -713,17 +645,6 @@ const getHomePageSpots = async (
       limit: parseInt(recent, 10),
       order: [["id", "ASC"]],
     });
-
-    // const upcomingSpots = await db.Spot.findAll({
-    //   where: {
-    //     id: {
-    //       [Op.in]: upcomingBookings.map((booking: Booking) => booking.spotId),
-    //     },
-    //   },
-    //   attributes: { exclude: ["createdAt", "updatedAt"] },
-    //   limit: parseInt(upcoming, 10),
-    //   order: [["id", "ASC"]],
-    // });
 
     const allSpots = {
       hosted: hostedSpots,
@@ -741,63 +662,23 @@ const getHomePageSpots = async (
   }
 };
 
-const getAllSpots = async (req: Request, res: Response, next: NextFunction) => {
-  const { page = "1", limit = "5" } = req.query as PaginationParams;
-  const pageNum = parseInt(page, 10);
-  const limitNum = parseInt(limit, 10);
-  const offset = (pageNum - 1) * limitNum;
-
-  try {
-    const count = await db.Spot.count({ where: { status: "published" } });
-    const spots = await db.Spot.findAll({
-      where: { status: "published" },
-      attributes: { exclude: ["createdAt", "updatedAt"] },
-      limit: limitNum,
-      offset: offset,
-      order: [["id", "ASC"]], // Consistent ordering
-    });
-
-    if (!spots) {
-      throw new CustomError(404, "spots not found!");
-    } else {
-      const totalPages = Math.ceil(count / limitNum);
-      const nextPage = pageNum < totalPages ? pageNum + 1 : null;
-
-      res.send({
-        type: "success",
-        data: spots,
-        pagination: {
-          totalItems: count,
-          itemsPerPage: limitNum,
-          currentPage: pageNum,
-          totalPages,
-          nextPage,
-        },
-      });
-    }
-  } catch (err) {
-    next(err);
-  }
-};
-
-interface SpotWithDistance extends Spot {
+interface SpaceWithDistance extends Space {
   distanceMiles?: number;
   distance?: string;
   availabilities?: Availability[];
   days?: any;
 }
 
-const querySpots = async (
+const querySpaces = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   const {
     userId,
-    address,
+    name,
     minRate,
     maxRate,
-    vehicleType,
     status = "published",
     date,
     duration,
@@ -807,7 +688,7 @@ const querySpots = async (
     lng,
     page = "1",
     limit = "5",
-  } = req.query as QuerySpot & { startTime?: string; type?: string };
+  } = req.query as QuerySpace & { startTime?: string; type?: string };
 
   const pageNum = parseInt(page, 10);
   const limitNum = parseInt(limit, 10);
@@ -890,21 +771,22 @@ const querySpots = async (
       return new Date(year, month - 1, day, hours, minutes);
     };
 
-    let whereClause: WhereOptions<Spot> = {};
+    let whereClause: WhereOptions<Space> = {};
 
     if (userId) {
       whereClause.userId = { [Op.ne]: userId };
     }
-    if (address) {
-      const addressKeywords = address.replace(/\s+/g, "").toLowerCase();
-      const addressWords = address.split(/\s+/).map((word) => `%${word}%`);
-      whereClause.address = {
+    if (name) {
+      const nameKeywords = name.replace(/\s+/g, "").toLowerCase();
+      const nameWords = name.split(/\s+/).map((word) => `%${word}%`);
+      whereClause.name = {
         [Op.or]: [
-          { [Op.iLike]: `%${addressKeywords}%` },
-          ...addressWords.map((word) => ({ [Op.iLike]: word })),
+          { [Op.iLike]: `%${nameKeywords}%` },
+          ...nameWords.map((word) => ({ [Op.iLike]: word })),
         ],
       };
     }
+
     if (status) {
       if (status !== "draft" && status !== "published") {
         throw new CustomError(400, "invalid status");
@@ -920,10 +802,6 @@ const querySpots = async (
       if (maxRate) {
         (whereClause.ratePerHour as any)[Op.lte] = parseFloat(maxRate);
       }
-    }
-
-    if (vehicleType) {
-      whereClause[`allowedVehicleType.${vehicleType}`] = true;
     }
 
     let attributes: FindAttributeOptions | undefined = undefined;
@@ -964,12 +842,12 @@ const querySpots = async (
       whereClause = {
         ...whereClause,
         [Op.and]: db.sequelize.where(spatialCondition, true),
-      } as WhereOptions<Spot>;
+      } as WhereOptions<Space>;
 
       order = [[db.sequelize.literal('"distanceMiles"'), "ASC"]];
     }
 
-    const count = await db.Spot.count({
+    const count = await db.Space.count({
       where: whereClause,
       include: {
         model: db.Availability,
@@ -979,7 +857,7 @@ const querySpots = async (
       },
     });
 
-    const spots = (await db.Spot.findAll({
+    const spaces = (await db.Space.findAll({
       attributes,
       where: whereClause,
       include: {
@@ -991,13 +869,13 @@ const querySpots = async (
       limit: limitNum,
       offset: offset,
       order,
-    })) as unknown as SpotWithDistance[];
+    })) as unknown as SpaceWithDistance[];
 
-    if (!spots) {
-      throw new CustomError(404, "no spot found!");
+    if (!spaces) {
+      throw new CustomError(404, "no space found!");
     }
 
-    let filteredSpots = spots;
+    let filteredSpaces = spaces;
 
     if (date && startTime && durationInMinutes && type) {
       const endTime = (() => {
@@ -1023,29 +901,29 @@ const querySpots = async (
       const startDateTime = parseCustomDate(date, startTime);
       const endDateTime = parseCustomDate(endDate, endTime);
 
-      const spotIds = spots.map((spot) => spot.id);
+      const spaceIds = spaces.map((space) => space.id);
       const existingBookings = await db.Booking.findAll({
         where: {
-          spotId: { [Op.in]: spotIds },
+          spaceId: { [Op.in]: spaceIds },
           status: ["accepted", "payment-pending"],
         },
       });
 
-      const bookingsBySpot = existingBookings.reduce((acc, booking) => {
-        if (!acc[booking.spotId]) {
-          acc[booking.spotId] = [];
+      const bookingsBySpace = existingBookings.reduce((acc, booking) => {
+        if (!acc[booking.spaceId]) {
+          acc[booking.spaceId] = [];
         }
-        acc[booking.spotId].push(booking);
+        acc[booking.spaceId].push(booking);
         return acc;
       }, {} as Record<string, any[]>);
 
-      filteredSpots = spots.filter((spot) => {
+      filteredSpaces = spaces.filter((space) => {
         if (type === "normal") {
-          if (!spot.availabilities || !Array.isArray(spot.availabilities)) {
+          if (!space.availabilities || !Array.isArray(space.availabilities)) {
             return false;
           }
 
-          const dayAvailabilities = spot.availabilities.filter(
+          const dayAvailabilities = space.availabilities.filter(
             (availability) => availability.day === dayOfWeek
           );
 
@@ -1077,9 +955,9 @@ const querySpots = async (
           }
         }
 
-        const spotBookings = bookingsBySpot[spot.id] || [];
+        const spaceBookings = bookingsBySpace[space.id] || [];
 
-        for (const booking of spotBookings) {
+        for (const booking of spaceBookings) {
           const existingStart = parseCustomDate(
             booking.startDate,
             booking.startTime
@@ -1098,12 +976,12 @@ const querySpots = async (
         return true; // Spot is available
       });
     } else if (dayOfWeek && durationInMinutes) {
-      filteredSpots = spots.filter((spot) => {
-        if (!spot.availabilities || !Array.isArray(spot.availabilities)) {
+      filteredSpaces = spaces.filter((space) => {
+        if (!space.availabilities || !Array.isArray(space.availabilities)) {
           return false;
         }
 
-        const dayAvailabilities = spot.availabilities.filter(
+        const dayAvailabilities = space.availabilities.filter(
           (availability) => availability.day === dayOfWeek
         );
 
@@ -1128,36 +1006,36 @@ const querySpots = async (
     }
 
     // Format the distance to show as "0.23 miles" and deduplicate availabilities
-    const spotsWithFormattedDistance = filteredSpots.map((spot) => {
-      const spotObj = spot.toJSON() as SpotWithDistance;
+    const spacesWithFormattedDistance = filteredSpaces.map((space) => {
+      const spaceObj = space.toJSON() as SpaceWithDistance;
 
-      if (spotObj.availabilities && Array.isArray(spotObj.availabilities)) {
+      if (spaceObj.availabilities && Array.isArray(spaceObj.availabilities)) {
         const uniqueDaysSet = new Set<string>();
 
-        for (const avail of spotObj.availabilities) {
+        for (const avail of spaceObj.availabilities) {
           uniqueDaysSet.add(avail.day);
         }
 
         const weekOrder = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        spotObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
+        spaceObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
       }
 
-      if (spotObj.distanceMiles !== undefined) {
-        spotObj.distance = `${parseFloat(
-          spotObj.distanceMiles.toString()
+      if (spaceObj.distanceMiles !== undefined) {
+        spaceObj.distance = `${parseFloat(
+          spaceObj.distanceMiles.toString()
         ).toFixed(2)} miles`;
       }
 
-      return spotObj;
+      return spaceObj;
     });
 
-    const filteredCount = spotsWithFormattedDistance.length;
+    const filteredCount = spacesWithFormattedDistance.length;
     const totalPages = Math.ceil(filteredCount / limitNum);
     const nextPage = pageNum < totalPages ? pageNum + 1 : null;
 
     res.send({
       type: "success",
-      data: spotsWithFormattedDistance,
+      data: spacesWithFormattedDistance,
       pagination: {
         totalItems: filteredCount,
         itemsPerPage: limitNum,
@@ -1172,7 +1050,7 @@ const querySpots = async (
   }
 };
 
-const mapViewSpots = async (
+const mapViewSpaces = async (
   req: Request,
   res: Response,
   next: NextFunction
@@ -1181,7 +1059,6 @@ const mapViewSpots = async (
     userId,
     minRate,
     maxRate,
-    vehicleType,
     status = "published",
     date,
     duration,
@@ -1189,7 +1066,7 @@ const mapViewSpots = async (
     type,
     lat,
     lng,
-  } = req.query as QuerySpot & { startTime?: string; type?: string };
+  } = req.query as QuerySpace & { startTime?: string; type?: string };
 
   try {
     let dayOfWeek: string | null = null;
@@ -1267,7 +1144,7 @@ const mapViewSpots = async (
       return new Date(year, month - 1, day, hours, minutes);
     };
 
-    let whereClause: WhereOptions<Spot> = {};
+    let whereClause: WhereOptions<Space> = {};
 
     if (status) {
       if (status !== "draft" && status !== "published") {
@@ -1288,10 +1165,6 @@ const mapViewSpots = async (
       if (maxRate) {
         (whereClause.ratePerHour as any)[Op.lte] = parseFloat(maxRate);
       }
-    }
-
-    if (vehicleType) {
-      whereClause[`allowedVehicleType.${vehicleType}`] = true;
     }
 
     let attributes: FindAttributeOptions | undefined = undefined;
@@ -1332,7 +1205,7 @@ const mapViewSpots = async (
       whereClause = {
         ...whereClause,
         [Op.and]: db.sequelize.where(spatialCondition, true),
-      } as WhereOptions<Spot>;
+      } as WhereOptions<Space>;
 
       order = [[db.sequelize.literal('"distanceMiles"'), "ASC"]];
     }
@@ -1341,7 +1214,7 @@ const mapViewSpots = async (
       (date && startTime && durationInMinutes && type) ||
       (dayOfWeek && durationInMinutes);
 
-    const spots = (await db.Spot.findAll({
+    const spaces = (await db.Spot.findAll({
       attributes,
       where: whereClause,
       include: includeAvailabilities
@@ -1353,13 +1226,13 @@ const mapViewSpots = async (
           }
         : undefined,
       order,
-    })) as unknown as SpotWithDistance[];
+    })) as unknown as SpaceWithDistance[];
 
-    if (!spots) {
-      throw new CustomError(404, "no spot found!");
+    if (!spaces) {
+      throw new CustomError(404, "no space found!");
     }
 
-    let filteredSpots = spots;
+    let filteredSpaces = spaces;
 
     // Only perform availability-based filtering when availabilities are loaded
     if (
@@ -1392,29 +1265,29 @@ const mapViewSpots = async (
       const startDateTime = parseCustomDate(date, startTime);
       const endDateTime = parseCustomDate(endDate, endTime);
 
-      const spotIds = spots.map((spot) => spot.id);
+      const spaceIds = spaces.map((space) => space.id);
       const existingBookings = await db.Booking.findAll({
         where: {
-          spotId: { [Op.in]: spotIds },
+          spaceId: { [Op.in]: spaceIds },
           status: ["accepted", "payment-pending"],
         },
       });
 
-      const bookingsBySpot = existingBookings.reduce((acc, booking) => {
-        if (!acc[booking.spotId]) {
-          acc[booking.spotId] = [];
+      const bookingsBySpace = existingBookings.reduce((acc, booking) => {
+        if (!acc[booking.spaceId]) {
+          acc[booking.spaceId] = [];
         }
-        acc[booking.spotId].push(booking);
+        acc[booking.spaceId].push(booking);
         return acc;
       }, {} as Record<string, any[]>);
 
-      filteredSpots = spots.filter((spot) => {
+      filteredSpaces = spaces.filter((space) => {
         if (type === "normal") {
-          if (!spot.availabilities || !Array.isArray(spot.availabilities)) {
+          if (!space.availabilities || !Array.isArray(space.availabilities)) {
             return false;
           }
 
-          const dayAvailabilities = spot.availabilities.filter(
+          const dayAvailabilities = space.availabilities.filter(
             (availability) => availability.day === dayOfWeek
           );
 
@@ -1446,9 +1319,9 @@ const mapViewSpots = async (
           }
         }
 
-        const spotBookings = bookingsBySpot[spot.id] || [];
+        const spaceBookings = bookingsBySpace[space.id] || [];
 
-        for (const booking of spotBookings) {
+        for (const booking of spaceBookings) {
           const existingStart = parseCustomDate(
             booking.startDate,
             booking.startTime
@@ -1467,12 +1340,12 @@ const mapViewSpots = async (
         return true;
       });
     } else if (includeAvailabilities && dayOfWeek && durationInMinutes) {
-      filteredSpots = spots.filter((spot) => {
-        if (!spot.availabilities || !Array.isArray(spot.availabilities)) {
+      filteredSpaces = spaces.filter((space) => {
+        if (!space.availabilities || !Array.isArray(space.availabilities)) {
           return false;
         }
 
-        const dayAvailabilities = spot.availabilities.filter(
+        const dayAvailabilities = space.availabilities.filter(
           (availability) => availability.day === dayOfWeek
         );
 
@@ -1496,10 +1369,9 @@ const mapViewSpots = async (
       });
     }
 
-    const responseData = filteredSpots.map((spot) => ({
-      id: spot.id,
-      price: spot.ratePerHour,
-      location: spot.location,
+    const responseData = filteredSpaces.map((space) => ({
+      id: space.id,
+      price: space.ratePerHour,
     }));
 
     res.send({
@@ -1512,33 +1384,33 @@ const mapViewSpots = async (
   }
 };
 
-const deleteSpot = async (
+const deleteSpace = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
-  const spotId = req.body.id;
+  const spaceId = req.body.id;
   const transaction = await db.sequelize.transaction();
   try {
-    if (!spotId) {
-      throw new CustomError(400, "spot id is missing");
+    if (!spaceId) {
+      throw new CustomError(400, "space id is missing");
     }
-    const spot = await db.Spot.findOne({
-      where: { id: spotId },
+    const space = await db.Space.findOne({
+      where: { id: spaceId },
       transaction,
     });
-    if (!spot) {
-      throw new CustomError(404, "spot not Found!");
+    if (!space) {
+      throw new CustomError(404, "space not Found!");
     }
-    if (spot.userId !== req.user.id) {
+    if (space.userId !== req.user.id) {
       throw new CustomError(403, "user unautherized!");
     }
 
-    await spot.destroy({ transaction });
+    await space.destroy({ transaction });
     await transaction.commit();
     res.send({
       type: "success",
-      message: "spot deleted",
+      message: "space deleted",
     });
   } catch (err) {
     await transaction.rollback();
@@ -1546,456 +1418,463 @@ const deleteSpot = async (
   }
 };
 
-const spotBookedDates = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  const spotId = req.params.spotId;
-  const { duration, type } = req.query as {
-    duration?: string;
-    type?: "normal" | "custom";
-  };
+// const spaceBookedDates = async (
+//   req: AuthenticatedRequest,
+//   res: Response,
+//   next: NextFunction
+// ): Promise<void> => {
+//   const spaceId = req.params.spaceId;
+//   const { duration, type } = req.query as {
+//     duration?: string;
+//     type?: "normal" | "custom";
+//   };
 
-  try {
-    if (!spotId) {
-      throw new CustomError(400, "spot id is missing");
-    }
+//   try {
+//     if (!spaceId) {
+//       throw new CustomError(400, "space id is missing");
+//     }
 
-    if (!duration) {
-      throw new CustomError(400, "duration is required");
-    }
+//     if (!duration) {
+//       throw new CustomError(400, "duration is required");
+//     }
 
-    if (!type || !["normal", "custom"].includes(type)) {
-      throw new CustomError(
-        400,
-        "type is required and must be either 'normal' or 'custom'"
-      );
-    }
+//     if (!type || !["normal", "custom"].includes(type)) {
+//       throw new CustomError(
+//         400,
+//         "type is required and must be either 'normal' or 'custom'"
+//       );
+//     }
 
-    const durationMinutes = parseInt(duration);
-    if (isNaN(durationMinutes) || durationMinutes <= 0) {
-      throw new CustomError(
-        400,
-        "duration must be a positive number in minutes"
-      );
-    }
-    if (type === "normal" && (durationMinutes < 15 || durationMinutes > 1440)) {
-      throw new CustomError(
-        400,
-        "duration must be between 15 minutes and 24 hours for normal bookings"
-      );
-    }
+//     const durationMinutes = parseInt(duration);
+//     if (isNaN(durationMinutes) || durationMinutes <= 0) {
+//       throw new CustomError(
+//         400,
+//         "duration must be a positive number in minutes"
+//       );
+//     }
+//     if (type === "normal" && (durationMinutes < 15 || durationMinutes > 1440)) {
+//       throw new CustomError(
+//         400,
+//         "duration must be between 15 minutes and 24 hours for normal bookings"
+//       );
+//     }
 
-    if (
-      type === "custom" &&
-      (durationMinutes < 1440 || durationMinutes > 43200)
-    ) {
-      throw new CustomError(
-        400,
-        "duration must be between 1 and 30 days for custom bookings"
-      );
-    }
+//     if (
+//       type === "custom" &&
+//       (durationMinutes < 1440 || durationMinutes > 43200)
+//     ) {
+//       throw new CustomError(
+//         400,
+//         "duration must be between 1 and 30 days for custom bookings"
+//       );
+//     }
 
-    const spot = await db.Spot.findOne({
-      where: { id: spotId },
-      attributes: ["id", "timeZone"],
-    });
+//     const space = await db.Space.findOne({
+//       where: { id: spaceId },
+//       attributes: ["id", "timeZone"],
+//       include:[
+//         {
+//           model: db.Venue,
+//           as: "venue",
+//         }
+//       ]
+//     }) as Space & { venue: Venue };
 
-    if (!spot) {
-      throw new CustomError(404, "spot not Found!");
-    }
+//     if (!space) {
+//       throw new CustomError(404, "space not Found!");
+//     }
 
-    const nowInSpotTz = DateTime.now().setZone(spot.timeZone);
-    const todayInSpotTz = nowInSpotTz.toFormat("yyyy-MM-dd");
-    const currentTimeInSpotTz = nowInSpotTz.toFormat("HH:mm");
 
-    console.log("Today in Spot Time Zone:", todayInSpotTz, nowInSpotTz);
-    console.log("Current Time in Spot Time Zone:", currentTimeInSpotTz);
+//     const nowInSpaceTz = DateTime.now().setZone(space?.venue?.timeZone);
+//     const todayInSpaceTz = nowInSpaceTz.toFormat("yyyy-MM-dd");
+//     const currentTimeInSpaceTz = nowInSpaceTz.toFormat("HH:mm");
 
-    // Get bookings from today onwards
-    const bookings = await db.Booking.findAll({
-      where: {
-        spotId: spot.id,
-        status: { [Op.in]: ["accepted", "payment-pending", "request-pending"] },
-        startDate: { [Op.gte]: todayInSpotTz },
-      },
-      attributes: ["startDate", "endDate", "startTime", "endTime"],
-      order: [
-        ["startDate", "ASC"],
-        ["startTime", "ASC"],
-      ],
-    });
+//     console.log("Today in Space Time Zone:", todayInSpaceTz, nowInSpaceTz);
+//     console.log("Current Time in Space Time Zone:", currentTimeInSpaceTz);
 
-    if (type === "custom") {
-      const durationDays = Math.ceil(durationMinutes / 1440);
-      const isMultiDay = durationDays > 1;
+//     // Get bookings from today onwards
+//     const bookings = await db.Booking.findAll({
+//       where: {
+//         spaceId: space.id,
+//         status: { [Op.in]: ["accepted", "payment-pending", "request-pending"] },
+//         startDate: { [Op.gte]: todayInSpaceTz },
+//       },
+//       attributes: ["startDate", "endDate", "startTime", "endTime"],
+//       order: [
+//         ["startDate", "ASC"],
+//         ["startTime", "ASC"],
+//       ],
+//     });
 
-      const generateDateRange = (
-        startDate: string,
-        endDate: string
-      ): string[] => {
-        const dates: string[] = [];
-        let current = DateTime.fromFormat(startDate, "yyyy-MM-dd", {
-          zone: spot.timeZone,
-        });
-        const end = DateTime.fromFormat(endDate, "yyyy-MM-dd", {
-          zone: spot.timeZone,
-        });
+//     if (type === "custom") {
+//       const durationDays = Math.ceil(durationMinutes / 1440);
+//       const isMultiDay = durationDays > 1;
 
-        while (current <= end) {
-          dates.push(current.toFormat("yyyy-MM-dd"));
-          current = current.plus({ days: 1 });
-        }
+//       const generateDateRange = (
+//         startDate: string,
+//         endDate: string
+//       ): string[] => {
+//         const dates: string[] = [];
+//         let current = DateTime.fromFormat(startDate, "yyyy-MM-dd", {
+//           zone: space.venue.timeZone,
+//         });
+//         const end = DateTime.fromFormat(endDate, "yyyy-MM-dd", {
+//           zone: space.venue.timeZone,
+//         });
 
-        return dates;
-      };
+//         while (current <= end) {
+//           dates.push(current.toFormat("yyyy-MM-dd"));
+//           current = current.plus({ days: 1 });
+//         }
 
-      const directlyBookedDates: string[] = [];
-      const bookedDateRanges: {
-        startDate: string;
-        endDate: string;
-        startTime: string;
-        endTime: string;
-      }[] = [];
+//         return dates;
+//       };
 
-      bookings.forEach((booking) => {
-        bookedDateRanges.push({
-          startDate: booking.startDate,
-          endDate: booking.endDate,
-          startTime: booking.startTime,
-          endTime: booking.endTime,
-        });
+//       const directlyBookedDates: string[] = [];
+//       const bookedDateRanges: {
+//         startDate: string;
+//         endDate: string;
+//         startTime: string;
+//         endTime: string;
+//       }[] = [];
 
-        const dateRange = generateDateRange(booking.startDate, booking.endDate);
-        directlyBookedDates.push(...dateRange);
-      });
+//       bookings.forEach((booking) => {
+//         bookedDateRanges.push({
+//           startDate: booking.startDate,
+//           endDate: booking.endDate,
+//           startTime: booking.startTime,
+//           endTime: booking.endTime,
+//         });
 
-      let allBlockedDates = [...directlyBookedDates];
+//         const dateRange = generateDateRange(booking.startDate, booking.endDate);
+//         directlyBookedDates.push(...dateRange);
+//       });
 
-      if (isMultiDay) {
-        const sortedBookedDates = [...new Set(directlyBookedDates)]
-          .sort()
-          .map((date) =>
-            DateTime.fromFormat(date, "yyyy-MM-dd", { zone: spot.timeZone })
-          );
+//       let allBlockedDates = [...directlyBookedDates];
 
-        let checkDate = DateTime.fromFormat(todayInSpotTz, "yyyy-MM-dd", {
-          zone: spot.timeZone,
-        });
-        const maxCheckDate =
-          sortedBookedDates.length > 0
-            ? sortedBookedDates[sortedBookedDates.length - 1].plus({
-                days: durationDays,
-              })
-            : checkDate.plus({ days: 90 });
+//       if (isMultiDay) {
+//         const sortedBookedDates = [...new Set(directlyBookedDates)]
+//           .sort()
+//           .map((date) =>
+//             DateTime.fromFormat(date, "yyyy-MM-dd", { zone: space.venue.timeZone })
+//           );
 
-        while (checkDate <= maxCheckDate) {
-          const checkDateStr = checkDate.toFormat("yyyy-MM-dd");
+//         let checkDate = DateTime.fromFormat(todayInSpaceTz, "yyyy-MM-dd", {
+//           zone: space.venue.timeZone,
+//         });
+//         const maxCheckDate =
+//           sortedBookedDates.length > 0
+//             ? sortedBookedDates[sortedBookedDates.length - 1].plus({
+//                 days: durationDays,
+//               })
+//             : checkDate.plus({ days: 90 });
 
-          if (!directlyBookedDates.includes(checkDateStr)) {
-            let hasConflict = false;
-            for (let i = 0; i < durationDays; i++) {
-              const dateToCheck = checkDate.plus({ days: i });
-              const dateStr = dateToCheck.toFormat("yyyy-MM-dd");
+//         while (checkDate <= maxCheckDate) {
+//           const checkDateStr = checkDate.toFormat("yyyy-MM-dd");
 
-              if (directlyBookedDates.includes(dateStr)) {
-                hasConflict = true;
-                break;
-              }
-            }
+//           if (!directlyBookedDates.includes(checkDateStr)) {
+//             let hasConflict = false;
+//             for (let i = 0; i < durationDays; i++) {
+//               const dateToCheck = checkDate.plus({ days: i });
+//               const dateStr = dateToCheck.toFormat("yyyy-MM-dd");
 
-            if (hasConflict) {
-              allBlockedDates.push(checkDateStr);
-            }
-          }
+//               if (directlyBookedDates.includes(dateStr)) {
+//                 hasConflict = true;
+//                 break;
+//               }
+//             }
 
-          checkDate = checkDate.plus({ days: 1 });
-        }
-      }
+//             if (hasConflict) {
+//               allBlockedDates.push(checkDateStr);
+//             }
+//           }
 
-      const uniqueBlockedDates = [...new Set(allBlockedDates)].sort();
+//           checkDate = checkDate.plus({ days: 1 });
+//         }
+//       }
 
-      // Find first available date for custom bookings
-      let firstAvailableDate: string | null = null;
-      let searchDate = DateTime.fromFormat(todayInSpotTz, "yyyy-MM-dd", {
-        zone: spot.timeZone,
-      });
-      const maxSearchDays = 90;
-      let searchDays = 0;
+//       const uniqueBlockedDates = [...new Set(allBlockedDates)].sort();
 
-      while (searchDays < maxSearchDays && !firstAvailableDate) {
-        const searchDateStr = searchDate.toFormat("yyyy-MM-dd");
+//       // Find first available date for custom bookings
+//       let firstAvailableDate: string | null = null;
+//       let searchDate = DateTime.fromFormat(todayInSpaceTz, "yyyy-MM-dd", {
+//         zone: space.venue.timeZone,
+//       });
+//       const maxSearchDays = 90;
+//       let searchDays = 0;
 
-        if (isMultiDay) {
-          let canBook = true;
-          for (let i = 0; i < durationDays; i++) {
-            const dateToCheck = searchDate.plus({ days: i });
-            const dateStr = dateToCheck.toFormat("yyyy-MM-dd");
+//       while (searchDays < maxSearchDays && !firstAvailableDate) {
+//         const searchDateStr = searchDate.toFormat("yyyy-MM-dd");
 
-            if (directlyBookedDates.includes(dateStr)) {
-              canBook = false;
-              break;
-            }
-          }
+//         if (isMultiDay) {
+//           let canBook = true;
+//           for (let i = 0; i < durationDays; i++) {
+//             const dateToCheck = searchDate.plus({ days: i });
+//             const dateStr = dateToCheck.toFormat("yyyy-MM-dd");
 
-          if (canBook) {
-            firstAvailableDate = searchDateStr;
-          }
-        } else {
-          if (!uniqueBlockedDates.includes(searchDateStr)) {
-            firstAvailableDate = searchDateStr;
-          }
-        }
+//             if (directlyBookedDates.includes(dateStr)) {
+//               canBook = false;
+//               break;
+//             }
+//           }
 
-        searchDate = searchDate.plus({ days: 1 });
-        searchDays++;
-      }
+//           if (canBook) {
+//             firstAvailableDate = searchDateStr;
+//           }
+//         } else {
+//           if (!uniqueBlockedDates.includes(searchDateStr)) {
+//             firstAvailableDate = searchDateStr;
+//           }
+//         }
 
-      res.send({
-        type: "success",
-        bookedDates: uniqueBlockedDates,
-        firstAvailableDate,
-      });
-    } else {
-      // For normal bookings, check spot availabilities
-      const spotAvailabilities = await db.Availability.findAll({
-        where: {
-          spotId: spot.id,
-        },
-        attributes: ["day", "startTime", "endTime"],
-      });
+//         searchDate = searchDate.plus({ days: 1 });
+//         searchDays++;
+//       }
 
-      const fullyBookedDates: string[] = [];
+//       res.send({
+//         type: "success",
+//         bookedDates: uniqueBlockedDates,
+//         firstAvailableDate,
+//       });
+//     } else {
+//       // For normal bookings, check space availabilities
+//       const spaceAvailabilities = await db.Availability.findAll({
+//         where: {
+//           spaceId: space.id,
+//         },
+//         attributes: ["day", "startTime", "endTime"],
+//       });
 
-      // Create a map of bookings by date
-      const bookingsByDate = new Map<
-        string,
-        Array<{
-          startTime: string;
-          endTime: string;
-        }>
-      >();
+//       const fullyBookedDates: string[] = [];
 
-      bookings.forEach((booking) => {
-        let current = DateTime.fromFormat(booking.startDate, "yyyy-MM-dd", {
-          zone: spot.timeZone,
-        });
-        const end = DateTime.fromFormat(booking.endDate, "yyyy-MM-dd", {
-          zone: spot.timeZone,
-        });
+//       // Create a map of bookings by date
+//       const bookingsByDate = new Map<
+//         string,
+//         Array<{
+//           startTime: string;
+//           endTime: string;
+//         }>
+//       >();
 
-        while (current <= end) {
-          const dateStr = current.toFormat("yyyy-MM-dd");
+//       bookings.forEach((booking) => {
+//         let current = DateTime.fromFormat(booking.startDate, "yyyy-MM-dd", {
+//           zone: space.venue.timeZone,
+//         });
+//         const end = DateTime.fromFormat(booking.endDate, "yyyy-MM-dd", {
+//           zone: space.venue.timeZone,
+//         });
 
-          if (!bookingsByDate.has(dateStr)) {
-            bookingsByDate.set(dateStr, []);
-          }
+//         while (current <= end) {
+//           const dateStr = current.toFormat("yyyy-MM-dd");
 
-          bookingsByDate.get(dateStr)!.push({
-            startTime: booking.startTime,
-            endTime: booking.endTime,
-          });
+//           if (!bookingsByDate.has(dateStr)) {
+//             bookingsByDate.set(dateStr, []);
+//           }
 
-          current = current.plus({ days: 1 });
-        }
-      });
+//           bookingsByDate.get(dateStr)!.push({
+//             startTime: booking.startTime,
+//             endTime: booking.endTime,
+//           });
 
-      // Helper function to convert day number to day string
-      const getDayString = (
-        dayNumber: number
-      ): "Sat" | "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" => {
-        const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        return days[dayNumber % 7] as
-          | "Sat"
-          | "Sun"
-          | "Mon"
-          | "Tue"
-          | "Wed"
-          | "Thu"
-          | "Fri";
-      };
+//           current = current.plus({ days: 1 });
+//         }
+//       });
 
-      // Check availability for each day up to 90 days from today
-      let checkDate = DateTime.fromFormat(todayInSpotTz, "yyyy-MM-dd", {
-        zone: spot.timeZone,
-      });
-      const maxCheckDays = 90;
+//       // Helper function to convert day number to day string
+//       const getDayString = (
+//         dayNumber: number
+//       ): "Sat" | "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" => {
+//         const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+//         return days[dayNumber % 7] as
+//           | "Sat"
+//           | "Sun"
+//           | "Mon"
+//           | "Tue"
+//           | "Wed"
+//           | "Thu"
+//           | "Fri";
+//       };
 
-      for (let i = 0; i < maxCheckDays; i++) {
-        const dateStr = checkDate.toFormat("yyyy-MM-dd");
-        const dayOfWeek = checkDate.weekday; // 1 = Monday, 7 = Sunday
-        const dayString = getDayString(dayOfWeek);
+//       // Check availability for each day up to 90 days from today
+//       let checkDate = DateTime.fromFormat(todayInSpaceTz, "yyyy-MM-dd", {
+//         zone: space.venue.timeZone,
+//       });
+//       const maxCheckDays = 90;
 
-        // Check if spot is available on this day of week
-        const dayAvailability = spotAvailabilities.find(
-          (avail) => avail.day === dayString
-        );
+//       for (let i = 0; i < maxCheckDays; i++) {
+//         const dateStr = checkDate.toFormat("yyyy-MM-dd");
+//         const dayOfWeek = checkDate.weekday; // 1 = Monday, 7 = Sunday
+//         const dayString = getDayString(dayOfWeek);
 
-        if (!dayAvailability) {
-          // No availability defined for this day, mark as booked
-          fullyBookedDates.push(dateStr);
-        } else {
-          // Check if there's enough time available considering bookings
-          const dayBookings = bookingsByDate.get(dateStr) || [];
-          const sortedBookings = dayBookings.sort((a, b) =>
-            a.startTime.localeCompare(b.startTime)
-          );
+//         // Check if space is available on this day of week
+//         const dayAvailability = spaceAvailabilities.find(
+//           (avail) => avail.day === dayString
+//         );
 
-          let hasAvailableSlot = false;
-          const availStartTime = dayAvailability.startTime;
-          const availEndTime = dayAvailability.endTime;
+//         if (!dayAvailability) {
+//           // No availability defined for this day, mark as booked
+//           fullyBookedDates.push(dateStr);
+//         } else {
+//           // Check if there's enough time available considering bookings
+//           const dayBookings = bookingsByDate.get(dateStr) || [];
+//           const sortedBookings = dayBookings.sort((a, b) =>
+//             a.startTime.localeCompare(b.startTime)
+//           );
 
-          // For today, check if current time affects availability
-          let effectiveStartTime = availStartTime;
-          if (dateStr === todayInSpotTz) {
-            const currentMinutes = nowInSpotTz.hour * 60 + nowInSpotTz.minute;
-            const availStartMinutes =
-              DateTime.fromFormat(availStartTime, "HH:mm").hour * 60 +
-              DateTime.fromFormat(availStartTime, "HH:mm").minute;
+//           let hasAvailableSlot = false;
+//           const availStartTime = dayAvailability.startTime;
+//           const availEndTime = dayAvailability.endTime;
 
-            if (currentMinutes > availStartMinutes) {
-              effectiveStartTime = currentTimeInSpotTz;
-            }
-          }
+//           // For today, check if current time affects availability
+//           let effectiveStartTime = availStartTime;
+//           if (dateStr === todayInSpaceTz) {
+//             const currentMinutes = nowInSpaceTz.hour * 60 + nowInSpaceTz.minute;
+//             const availStartMinutes =
+//               DateTime.fromFormat(availStartTime, "HH:mm").hour * 60 +
+//               DateTime.fromFormat(availStartTime, "HH:mm").minute;
 
-          if (sortedBookings.length === 0) {
-            // No bookings, check if duration fits in available time
-            const availStart = DateTime.fromFormat(
-              `${dateStr} ${effectiveStartTime}`,
-              "yyyy-MM-dd HH:mm",
-              { zone: spot.timeZone }
-            );
-            const availEnd = DateTime.fromFormat(
-              `${dateStr} ${availEndTime}`,
-              "yyyy-MM-dd HH:mm",
-              { zone: spot.timeZone }
-            );
+//             if (currentMinutes > availStartMinutes) {
+//               effectiveStartTime = currentTimeInSpaceTz;
+//             }
+//           }
 
-            if (
-              availEnd.diff(availStart, "minutes").minutes >= durationMinutes
-            ) {
-              hasAvailableSlot = true;
-            }
-          } else {
-            // Check slot before first booking
-            const firstBookingStart = DateTime.fromFormat(
-              `${dateStr} ${sortedBookings[0].startTime}`,
-              "yyyy-MM-dd HH:mm",
-              { zone: spot.timeZone }
-            );
-            const availStart = DateTime.fromFormat(
-              `${dateStr} ${effectiveStartTime}`,
-              "yyyy-MM-dd HH:mm",
-              { zone: spot.timeZone }
-            );
+//           if (sortedBookings.length === 0) {
+//             // No bookings, check if duration fits in available time
+//             const availStart = DateTime.fromFormat(
+//               `${dateStr} ${effectiveStartTime}`,
+//               "yyyy-MM-dd HH:mm",
+//               { zone: space.venue.timeZone }
+//             );
+//             const availEnd = DateTime.fromFormat(
+//               `${dateStr} ${availEndTime}`,
+//               "yyyy-MM-dd HH:mm",
+//               { zone: space.venue.timeZone }
+//             );
 
-            if (
-              firstBookingStart.diff(availStart, "minutes").minutes >=
-              durationMinutes
-            ) {
-              hasAvailableSlot = true;
-            }
+//             if (
+//               availEnd.diff(availStart, "minutes").minutes >= durationMinutes
+//             ) {
+//               hasAvailableSlot = true;
+//             }
+//           } else {
+//             // Check slot before first booking
+//             const firstBookingStart = DateTime.fromFormat(
+//               `${dateStr} ${sortedBookings[0].startTime}`,
+//               "yyyy-MM-dd HH:mm",
+//               { zone: space.venue.timeZone }
+//             );
+//             const availStart = DateTime.fromFormat(
+//               `${dateStr} ${effectiveStartTime}`,
+//               "yyyy-MM-dd HH:mm",
+//               { zone: space.venue.timeZone }
+//             );
 
-            // Check slots between bookings
-            if (!hasAvailableSlot) {
-              for (let j = 0; j < sortedBookings.length - 1; j++) {
-                const currentEnd = DateTime.fromFormat(
-                  `${dateStr} ${sortedBookings[j].endTime}`,
-                  "yyyy-MM-dd HH:mm",
-                  { zone: spot.timeZone }
-                );
-                const nextStart = DateTime.fromFormat(
-                  `${dateStr} ${sortedBookings[j + 1].startTime}`,
-                  "yyyy-MM-dd HH:mm",
-                  { zone: spot.timeZone }
-                );
+//             if (
+//               firstBookingStart.diff(availStart, "minutes").minutes >=
+//               durationMinutes
+//             ) {
+//               hasAvailableSlot = true;
+//             }
 
-                if (
-                  nextStart.diff(currentEnd, "minutes").minutes >=
-                  durationMinutes
-                ) {
-                  hasAvailableSlot = true;
-                  break;
-                }
-              }
-            }
+//             // Check slots between bookings
+//             if (!hasAvailableSlot) {
+//               for (let j = 0; j < sortedBookings.length - 1; j++) {
+//                 const currentEnd = DateTime.fromFormat(
+//                   `${dateStr} ${sortedBookings[j].endTime}`,
+//                   "yyyy-MM-dd HH:mm",
+//                   { zone: space.venue.timeZone }
+//                 );
+//                 const nextStart = DateTime.fromFormat(
+//                   `${dateStr} ${sortedBookings[j + 1].startTime}`,
+//                   "yyyy-MM-dd HH:mm",
+//                   { zone: space.venue.timeZone }
+//                 );
 
-            // Check slot after last booking
-            if (!hasAvailableSlot) {
-              const lastBookingEnd = DateTime.fromFormat(
-                `${dateStr} ${
-                  sortedBookings[sortedBookings.length - 1].endTime
-                }`,
-                "yyyy-MM-dd HH:mm",
-                { zone: spot.timeZone }
-              );
-              const availEnd = DateTime.fromFormat(
-                `${dateStr} ${availEndTime}`,
-                "yyyy-MM-dd HH:mm",
-                { zone: spot.timeZone }
-              );
+//                 if (
+//                   nextStart.diff(currentEnd, "minutes").minutes >=
+//                   durationMinutes
+//                 ) {
+//                   hasAvailableSlot = true;
+//                   break;
+//                 }
+//               }
+//             }
 
-              if (
-                availEnd.diff(lastBookingEnd, "minutes").minutes >=
-                durationMinutes
-              ) {
-                hasAvailableSlot = true;
-              }
-            }
-          }
+//             // Check slot after last booking
+//             if (!hasAvailableSlot) {
+//               const lastBookingEnd = DateTime.fromFormat(
+//                 `${dateStr} ${
+//                   sortedBookings[sortedBookings.length - 1].endTime
+//                 }`,
+//                 "yyyy-MM-dd HH:mm",
+//                 { zone: space.venue.timeZone }
+//               );
+//               const availEnd = DateTime.fromFormat(
+//                 `${dateStr} ${availEndTime}`,
+//                 "yyyy-MM-dd HH:mm",
+//                 { zone: space.venue.timeZone }
+//               );
 
-          if (!hasAvailableSlot) {
-            fullyBookedDates.push(dateStr);
-          }
-        }
+//               if (
+//                 availEnd.diff(lastBookingEnd, "minutes").minutes >=
+//                 durationMinutes
+//               ) {
+//                 hasAvailableSlot = true;
+//               }
+//             }
+//           }
 
-        checkDate = checkDate.plus({ days: 1 });
-      }
+//           if (!hasAvailableSlot) {
+//             fullyBookedDates.push(dateStr);
+//           }
+//         }
 
-      // Find first available date for normal bookings
-      let firstAvailableDate: string | null = null;
-      let searchDate = DateTime.fromFormat(todayInSpotTz, "yyyy-MM-dd", {
-        zone: spot.timeZone,
-      });
-      const maxSearchDays = 90;
-      let searchDays = 0;
+//         checkDate = checkDate.plus({ days: 1 });
+//       }
 
-      while (searchDays < maxSearchDays && !firstAvailableDate) {
-        const searchDateStr = searchDate.toFormat("yyyy-MM-dd");
+//       // Find first available date for normal bookings
+//       let firstAvailableDate: string | null = null;
+//       let searchDate = DateTime.fromFormat(todayInSpaceTz, "yyyy-MM-dd", {
+//         zone: space.venue.timeZone,
+//       });
+//       const maxSearchDays = 90;
+//       let searchDays = 0;
 
-        if (!fullyBookedDates.includes(searchDateStr)) {
-          firstAvailableDate = searchDateStr;
-        }
+//       while (searchDays < maxSearchDays && !firstAvailableDate) {
+//         const searchDateStr = searchDate.toFormat("yyyy-MM-dd");
 
-        searchDate = searchDate.plus({ days: 1 });
-        searchDays++;
-      }
+//         if (!fullyBookedDates.includes(searchDateStr)) {
+//           firstAvailableDate = searchDateStr;
+//         }
 
-      res.send({
-        type: "success",
-        bookedDates: fullyBookedDates.sort(),
-        firstAvailableDate,
-      });
-    }
-  } catch (err) {
-    next(err);
-  }
-};
+//         searchDate = searchDate.plus({ days: 1 });
+//         searchDays++;
+//       }
 
-const suggestedSpots = async (
+//       res.send({
+//         type: "success",
+//         bookedDates: fullyBookedDates.sort(),
+//         firstAvailableDate,
+//       });
+//     }
+//   } catch (err) {
+//     next(err);
+//   }
+// };
+
+const suggestedSpaces = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
-  const { userId, lat, lng, page = "1", limit = "5" } = req.query as QuerySpot;
+  const { userId, lat, lng, page = "1", limit = "5" } = req.query as QuerySpace;
 
   const pageNum = parseInt(page, 10);
   const limitNum = parseInt(limit, 10);
   const offset = (pageNum - 1) * limitNum;
 
   try {
-    let whereClause: WhereOptions<Spot> = {
+    let whereClause: WhereOptions<Space> = {
       status: "published",
     };
 
@@ -2036,7 +1915,7 @@ const suggestedSpots = async (
       },
     });
 
-    const spots = (await db.Spot.findAll({
+    const spaces = (await db.Space.findAll({
       attributes,
       where: whereClause,
       include: {
@@ -2048,33 +1927,33 @@ const suggestedSpots = async (
       limit: limitNum,
       offset: offset,
       order,
-    })) as unknown as SpotWithDistance[];
+    })) as unknown as SpaceWithDistance[];
 
-    if (!spots) {
-      throw new CustomError(404, "No spots found!");
+    if (!spaces) {
+      throw new CustomError(404, "No spaces found!");
     }
 
-    const spotsWithFormattedDistance = spots.map((spot) => {
-      const spotObj = spot.toJSON() as SpotWithDistance;
+    const spacesWithFormattedDistance = spaces.map((space) => {
+      const spaceObj = space.toJSON() as SpaceWithDistance;
 
-      if (spotObj.availabilities && Array.isArray(spotObj.availabilities)) {
+      if (spaceObj.availabilities && Array.isArray(spaceObj.availabilities)) {
         const uniqueDaysSet = new Set<string>();
 
-        for (const avail of spotObj.availabilities) {
+        for (const avail of spaceObj.availabilities) {
           uniqueDaysSet.add(avail.day);
         }
 
         const weekOrder = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        spotObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
+        spaceObj.days = weekOrder.filter((day) => uniqueDaysSet.has(day));
       }
 
-      if (spotObj.distanceMiles !== undefined) {
-        spotObj.distance = `${parseFloat(
-          spotObj.distanceMiles.toString()
+      if (spaceObj.distanceMiles !== undefined) {
+        spaceObj.distance = `${parseFloat(
+          spaceObj.distanceMiles.toString()
         ).toFixed(2)} miles`;
       }
 
-      return spotObj;
+      return spaceObj;
     });
 
     const totalPages = Math.ceil(count / limitNum);
@@ -2082,7 +1961,7 @@ const suggestedSpots = async (
 
     res.send({
       type: "success",
-      data: spotsWithFormattedDistance,
+      data: spacesWithFormattedDistance,
       pagination: {
         totalItems: count,
         itemsPerPage: limitNum,
@@ -2098,15 +1977,14 @@ const suggestedSpots = async (
 };
 
 export default {
-  createSpot,
-  getSpot,
-  getUserSpots,
-  getHomePageSpots,
-  getAllSpots,
-  querySpots,
-  mapViewSpots,
-  updateSpot,
-  deleteSpot,
-  suggestedSpots,
-  spotBookedDates,
+  createSpace,
+  getSpace,
+  getUserSpaces,
+  getHomePageSpaces,
+  querySpaces,
+  mapViewSpaces,
+  updateSpace,
+  deleteSpace,
+  suggestedSpaces,
+  // spaceBookedDates,
 };

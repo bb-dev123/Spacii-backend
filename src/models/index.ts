@@ -3,13 +3,10 @@ import {
   Availability,
   Booking,
   OTP,
-  Preference,
-  PreferenceType,
-  PreferenceFeature,
   Venue,
   Space,
-  SpaceFeature,
-  SpaceType,
+  Media,
+  Tag,
   User,
   TimeChange,
   Payment,
@@ -20,12 +17,9 @@ import {
 import { initUserModel } from "./user";
 import { initOTPModel } from "./otp";
 import { initVenueModel } from "./venue";
-import { initPreferenceModel } from "./preference";
-import { initPreferenceTypeModel } from "./preferenceType";
-import { initPreferenceFeatureModel } from "./preferenceFeature";
 import { initSpaceModel } from "./space";
-import { initSpaceTypeModel } from "./spaceType";
-import { initSpaceFeatureModel } from "./spaceFeature";
+import { initMediaModel } from "./media";
+import { initTagModel } from "./tag";
 import { initAvailabilityModel } from "./availability";
 import { initBookingModel } from "./booking";
 import { initTimeChangeModel } from "./timechange";
@@ -49,11 +43,8 @@ interface DB {
   OTP: typeof OTP;
   Venue: typeof Venue;
   Space: typeof Space;
-  SpaceType: typeof SpaceType;
-  SpaceFeature: typeof SpaceFeature;
-  Preference: typeof Preference;
-  PreferenceType: typeof PreferenceType;
-  PreferenceFeature: typeof PreferenceFeature;
+  Media: typeof Media;
+  Tag: typeof Tag;
   Availability: typeof Availability;
   Booking: typeof Booking;
   TimeChange: typeof TimeChange;
@@ -79,12 +70,9 @@ const sequelize = new Sequelize(
 db.User = initUserModel(sequelize);
 db.OTP = initOTPModel(sequelize);
 db.Venue = initVenueModel(sequelize);
-db.Preference = initPreferenceModel(sequelize);
-db.PreferenceType = initPreferenceTypeModel(sequelize);
-db.PreferenceFeature = initPreferenceFeatureModel(sequelize);
 db.Space = initSpaceModel(sequelize);
-db.SpaceType = initSpaceTypeModel(sequelize);
-db.SpaceFeature = initSpaceFeatureModel(sequelize);
+db.Media = initMediaModel(sequelize);
+db.Tag = initTagModel(sequelize);
 db.Availability = initAvailabilityModel(sequelize);
 db.Booking = initBookingModel(sequelize);
 db.TimeChange = initTimeChangeModel(sequelize);
@@ -145,55 +133,37 @@ db.Space.belongsTo(db.Venue, {
   as: "venue",
 });
 
-User.hasOne(db.Preference, {
+User.hasMany(db.Tag, {
   foreignKey: "userId",
-  as: "preference",
+  as: "tags",
   onDelete: "CASCADE",
 });
-db.Preference.belongsTo(db.User, {
+db.Tag.belongsTo(db.User, {
   foreignKey: "userId",
   as: "user",
 });
 
-db.Preference.hasMany(db.PreferenceFeature, {
-  foreignKey: "preferenceId",
-  as: "features",
-  onDelete: "CASCADE",
-});
-db.PreferenceFeature.belongsTo(db.Preference, {
-  foreignKey: "preferenceId",
-  as: "preference",
-});
 
-db.Preference.hasMany(db.PreferenceType, {
-  foreignKey: "preferenceId",
-  as: "types",
-  onDelete: "CASCADE",
-});
-db.PreferenceType.belongsTo(db.Preference, {
-  foreignKey: "preferenceId",
-  as: "preference",
-});
-
-db.Space.hasMany(db.SpaceFeature, {
+db.Space.hasMany(db.Tag, {
   foreignKey: "spaceId",
-  as: "features",
+  as: "tags",
   onDelete: "CASCADE",
 });
-db.SpaceFeature.belongsTo(db.Space, {
+db.Tag.belongsTo(db.Space, {
   foreignKey: "spaceId",
   as: "space",
 });
 
-Space.hasMany(SpaceType, {
+db.Space.hasMany(db.Media, {
   foreignKey: "spaceId",
-  as: "types",
+  as: "media",
   onDelete: "CASCADE",
 });
-SpaceType.belongsTo(Space, {
+db.Media.belongsTo(db.Space, {
   foreignKey: "spaceId",
   as: "space",
 });
+
 
 /* one space has many availability and availability belongs to one space */
 db.Space.hasMany(db.Availability, {

@@ -1,11 +1,9 @@
 import { DataTypes, Sequelize } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
-import { SpaceType } from "../constants";
+import { Tag } from "../constants";
 
-export const initSpaceTypeModel = (
-  sequelize: Sequelize
-): typeof SpaceType => {
-  SpaceType.init(
+export const initTagModel = (sequelize: Sequelize): typeof Tag => {
+  Tag.init(
     {
       id: {
         type: DataTypes.UUID,
@@ -17,8 +15,12 @@ export const initSpaceTypeModel = (
         type: DataTypes.UUID,
         allowNull: false,
       },
-      preferenceId: {
+      spaceId: {
         type: DataTypes.UUID,
+        allowNull: true,
+      },
+      type: {
+        type: DataTypes.ENUM("vibe", "occassion", "architect", "features", "preference"),
         allowNull: false,
       },
       text: {
@@ -38,16 +40,16 @@ export const initSpaceTypeModel = (
     },
     {
       sequelize,
-      modelName: "SpaceType",
-      tableName: "SpaceTypes",
+      modelName: "Tag",
+      tableName: "Tags",
     }
   );
 
-  SpaceType.beforeValidate((SpaceType: SpaceType) => {
-    if (!SpaceType.id) {
-      SpaceType.id = uuidv4();
+  Tag.beforeValidate((Tag: Tag) => {
+    if (!Tag.id) {
+      Tag.id = uuidv4();
     }
   });
 
-  return SpaceType;
+  return Tag;
 };

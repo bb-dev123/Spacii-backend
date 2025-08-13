@@ -1,8 +1,7 @@
 import { Router } from "express";
-import controller from "../controllers/vehicleController";
+import controller from "../controllers/venueController";
 import { verifyUser } from "../middlewares/passport";
 import { validateRequest } from "../middlewares/validation";
-import { createVehicleValidations, deleteVehicleValidations, getVehicleValidations, updateVehicleValidations, userVehiclesQueryValidations, vehiclesQueryValidations } from "./validations/vehicleValidations";
 
 const router = Router();
 

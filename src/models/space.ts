@@ -23,14 +23,6 @@ export const initSpaceModel = (sequelize: Sequelize): typeof Space => {
         type: DataTypes.STRING,
         allowNull: false,
       },
-      images: {
-        type: DataTypes.ARRAY(DataTypes.STRING),
-        allowNull: true,
-      },
-      videos: {
-        type: DataTypes.ARRAY(DataTypes.STRING),
-        allowNull: true,
-      },
       roomNumber: {
         type: DataTypes.INTEGER,
         allowNull: true,
@@ -39,13 +31,10 @@ export const initSpaceModel = (sequelize: Sequelize): typeof Space => {
         type: DataTypes.INTEGER,
         allowNull: true,
       },
-      tag: {
-        type: DataTypes.ENUM("vibe", "occassion", "architect"),
-        allowNull: false,
-      },
       ratePerHour: {
         type: DataTypes.DECIMAL(10, 2),
         defaultValue: 0.0,
+        allowNull: true,
       },
       minHours: {
         type: DataTypes.INTEGER,
