@@ -1,11 +1,7 @@
 import moment from "moment";
 import db from "../models";
 import { CustomError } from "../middlewares/error";
-import {
-  FindAttributeOptions,
-  Op,
-  WhereOptions,
-} from "sequelize";
+import { FindAttributeOptions, Op, WhereOptions } from "sequelize";
 import { Request, Response, NextFunction } from "express";
 import {
   Availability,
@@ -18,6 +14,10 @@ import {
 } from "../constants";
 import { deleteMediaFromS3, uploadSpaceMediaToS3 } from "../helpers/s3Helper";
 import { DateTime } from "luxon";
+import {
+  convertTimeToMinutes,
+  normalizeTimeFormat,
+} from "../helpers/timeDateHelpers";
 
 const createSpace = async (
   req: AuthenticatedRequest,
@@ -43,6 +43,11 @@ const createSpace = async (
       throw new CustomError(400, "invalid status");
     }
 
+    const venue = await db.Venue.findByPk(venueId, { transaction });
+    if (!venue) {
+      throw new CustomError(404, "venue not found");
+    }
+
     const newSpace = await db.Space.create(
       {
         userId: req.user.id,
@@ -52,6 +57,7 @@ const createSpace = async (
         capacity,
         status,
         description: description || null,
+        timeZone: venue.timeZone || null,
       },
       { transaction }
     );
@@ -94,6 +100,7 @@ export const updateSpace = async (
     minHours,
     discountHours,
     status,
+    availabilities,
     mediaOperations,
   } = req.body;
 
@@ -291,6 +298,78 @@ export const updateSpace = async (
       { transaction }
     );
 
+    let hasOverlaps = false;
+    let processedAvailabilities: any[] = [];
+
+    if (availabilities && availabilities.length > 0) {
+      const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+      for (let i = 0; i < availabilities.length; i++) {
+        const { day, startTime, endTime } = availabilities[i];
+
+        if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+          throw new CustomError(
+            400,
+            `invalid time format at index ${i}. Times must be in 24-hour format (HH:MM)`
+          );
+        }
+
+        const normalizedStartTime = normalizeTimeFormat(startTime);
+        const normalizedEndTime = normalizeTimeFormat(endTime);
+
+        const startMinutes = convertTimeToMinutes(normalizedStartTime);
+        const endMinutes = convertTimeToMinutes(normalizedEndTime);
+
+        if (endMinutes <= startMinutes) {
+          throw new CustomError(
+            400,
+            `end time must be after start time at index ${i}`
+          );
+        }
+
+        processedAvailabilities.push({
+          day,
+          startTime: normalizedStartTime,
+          endTime: normalizedEndTime,
+          startMinutes,
+          endMinutes,
+        });
+      }
+
+      for (let i = 0; i < processedAvailabilities.length && !hasOverlaps; i++) {
+        for (let j = i + 1; j < processedAvailabilities.length; j++) {
+          const current = processedAvailabilities[i];
+          const other = processedAvailabilities[j];
+
+          if (current.day === other.day) {
+            if (
+              (current.startMinutes >= other.startMinutes &&
+                current.startMinutes < other.endMinutes) ||
+              (current.endMinutes > other.startMinutes &&
+                current.endMinutes <= other.endMinutes) ||
+              (current.startMinutes <= other.startMinutes &&
+                current.endMinutes >= other.endMinutes)
+            ) {
+              hasOverlaps = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (processedAvailabilities.length > 0 && !hasOverlaps) {
+      await db.Availability.bulkCreate(
+        processedAvailabilities.map((availability) => ({
+          spaceId: space.id,
+          day: availability.day,
+          startTime: availability.startTime,
+          endTime: availability.endTime,
+        })),
+        { transaction }
+      );
+    }
+
     const completeSpace = await db.Space.findByPk(space.id, {
       attributes: {
         exclude: ["createdAt", "updatedAt"],
@@ -313,11 +392,20 @@ export const updateSpace = async (
 
     await transaction.commit();
 
-    res.send({
-      type: "success",
-      message: "Space updated successfully",
-      data: completeSpace,
-    });
+    if (hasOverlaps) {
+      res.send({
+        type: "success",
+        message:
+          "space updated successfully, but availability overlaps detected. Availabilities were not saved.",
+        data: completeSpace,
+      });
+    } else {
+      res.send({
+        type: "success",
+        message: "space updated successfully",
+        data: completeSpace,
+      });
+    }
   } catch (err) {
     await transaction.rollback();
     next(err);
@@ -337,7 +425,7 @@ const getSpace = async (req: Request, res: Response, next: NextFunction) => {
 
     attributes = { exclude: ["createdAt", "updatedAt"] };
 
-    const space = (await db.Space.findOne({
+    const space = await db.Space.findOne({
       where: whereClause,
       attributes,
       include: [
@@ -345,6 +433,12 @@ const getSpace = async (req: Request, res: Response, next: NextFunction) => {
           model: db.Availability,
           as: "availabilities",
           attributes: ["id", "day", "startTime", "endTime"],
+        },
+        {
+          model: db.Media,
+          as: "media",
+          attributes: { exclude: ["createdAt", "updatedAt"] },
+          order: [["number", "ASC"]],
         },
         {
           model: db.Booking,
@@ -361,7 +455,7 @@ const getSpace = async (req: Request, res: Response, next: NextFunction) => {
           },
         },
       ],
-    }));
+    });
 
     if (!space) {
       throw new CustomError(404, "space not found!");
@@ -413,12 +507,7 @@ const getUserSpaces = async (
   res: Response,
   next: NextFunction
 ) => {
-  const {
-    name,
-    status,
-    page = "1",
-    limit = "5",
-  } = req.query as QuerySpace;
+  const { name, status, page = "1", limit = "5" } = req.query as QuerySpace;
 
   const pageNum = parseInt(page, 10);
   const limitNum = parseInt(limit, 10);
@@ -453,11 +542,19 @@ const getUserSpaces = async (
     const spaces = await db.Space.findAll({
       attributes: { exclude: ["createdAt", "updatedAt"] },
       where: whereClause,
-      include: {
-        model: db.Availability,
-        as: "availabilities",
-        attributes: ["id", "day", "startTime", "endTime"],
-      },
+      include: [
+        {
+          model: db.Availability,
+          as: "availabilities",
+          attributes: ["id", "day", "startTime", "endTime"],
+        },
+        {
+          model: db.Media,
+          as: "media",
+          attributes: { exclude: ["createdAt", "updatedAt"] },
+          order: [["number", "ASC"]],
+        },
+      ],
       limit: limitNum,
       offset: offset,
       order,
@@ -1483,7 +1580,6 @@ const deleteSpace = async (
 //     if (!space) {
 //       throw new CustomError(404, "space not Found!");
 //     }
-
 
 //     const nowInSpaceTz = DateTime.now().setZone(space?.venue?.timeZone);
 //     const todayInSpaceTz = nowInSpaceTz.toFormat("yyyy-MM-dd");

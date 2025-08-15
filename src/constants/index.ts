@@ -158,6 +158,7 @@ export class Space extends Model<
   declare ratePerHour: number | null;
   declare minHours: number | null;
   declare discountHours: number | null;
+  declare timeZone: string | null;
 
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;

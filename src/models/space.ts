@@ -52,6 +52,11 @@ export const initSpaceModel = (sequelize: Sequelize): typeof Space => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      timeZone: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        defaultValue: "UTC",
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,
