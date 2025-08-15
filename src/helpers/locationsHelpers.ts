@@ -15,8 +15,7 @@ export const getLocationFromAddress = async (
         params: {
           address: cleanAddress,
           key:
-            process.env.GOOGLE_MAPS_API_KEY ||
-            "AIzaSyAjan5owKZSB60tX6FGt-7KhbCzBwROlR0",
+            process.env.GOOGLE_MAPS_API_KEY,
         },
         timeout: 10000, // 10 second timeout
       }
